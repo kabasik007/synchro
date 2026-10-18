@@ -9,9 +9,10 @@ use std::fs::File;
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, Sender};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 mod ui;
+mod watch;
 
 const MAX_SIZE: u64 = 2 * 1024 * 1024 * 1024;
 
@@ -21,13 +22,17 @@ struct Settings {
     token: String,
     #[serde(default = "default_auto_send")]
     auto_send: bool,
+    #[serde(default)]
+    watch_folder: String,
+    #[serde(default)]
+    watch_enabled: bool,
 }
 
 fn default_auto_send() -> bool { true }
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { address: String::new(), token: String::new(), auto_send: true }
+        Self { address: String::new(), token: String::new(), auto_send: true, watch_folder: String::new(), watch_enabled: false }
     }
 }
 
@@ -62,6 +67,21 @@ fn target_url(address: &str) -> Result<String, String> {
     Ok(format!("{value}/upload"))
 }
 
+#[derive(Clone, Debug, Deserialize)]
+struct DeviceInfo {
+    #[serde(default)]
+    device: String,
+    #[serde(default, rename = "appVersion")]
+    app_version: String,
+    #[serde(default)]
+    sdk: u32,
+}
+#[derive(Clone)]
+struct SentItem {
+    name: String,
+    size: u64,
+}
+
 #[derive(Debug)]
 enum Event {
     Status(String),
@@ -69,7 +89,9 @@ enum Event {
     Finished(Result<String, String>),
     FileSent(PathBuf),
     FilesPicked(Vec<PathBuf>),
-    Connected(Result<(), String>),
+    FolderPicked(PathBuf),
+    WatchFile(PathBuf),
+    Connected(Result<DeviceInfo, String>),
 }
 
 struct ProgressFile {
@@ -104,7 +126,7 @@ fn hex_digest(file: &Path) -> Result<String, String> {
     Ok(format!("{:x}", hasher.finalize()))
 }
 
-fn check_receiver(settings: &Settings) -> Result<(), String> {
+fn check_receiver(settings: &Settings) -> Result<DeviceInfo, String> {
     if settings.token.trim().len() != 32 || !settings.token.trim().bytes().all(|b| b.is_ascii_hexdigit()) {
         return Err("Спочатку введи правильний код сполучення (32 символи).".into());
     }
@@ -118,12 +140,17 @@ fn check_receiver(settings: &Settings) -> Result<(), String> {
     let response = client.get(health_url)
         .header("X-Synchro-Token", settings.token.trim())
         .send().map_err(|e| format!("Телефон не відповідає: {e}"))?;
-    if response.status().is_success() {
-        Ok(())
-    } else {
-        Err(format!("Android повернув HTTP {}. Перевір код і версію Android Synchro.",
-            response.status()))
+    if !response.status().is_success() {
+        return Err(format!("Android повернув HTTP {}. Перевір код і версію Android Synchro.",
+            response.status()));
     }
+    let body = response.text().map_err(|e| format!("Недійсна відповідь Android: {e}"))?;
+    let mut info: DeviceInfo = serde_json::from_str(&body)
+        .map_err(|e| format!("Некоректна відповідь Android: {e}"))?;
+    if info.device.is_empty() {
+        info.device = "Android-пристрій".into();
+    }
+    Ok(info)
 }
 
 fn send_files(files: Vec<PathBuf>, settings: Settings, tx: Sender<Event>) -> Result<String, String> {
@@ -188,6 +215,10 @@ struct SynchroApp {
     last_checked_pair: Option<(String, String)>,
     show_token: bool,
     show_manual_path: bool,
+    history: Vec<SentItem>,
+    current_file: Option<String>,
+    watcher: watch::FolderWatch,
+    last_check: Instant,
 }
 
 impl Default for SynchroApp {
@@ -200,6 +231,9 @@ impl Default for SynchroApp {
             page: ui::Page::default(), connection: ui::Connection::default(),
             checking: false, last_checked_pair: None,
             show_token: false, show_manual_path: false,
+            history: Vec::new(), current_file: None,
+            watcher: watch::FolderWatch::default(),
+            last_check: Instant::now() - Duration::from_secs(30),
         }
     }
 }
@@ -233,6 +267,7 @@ impl SynchroApp {
 
     fn check_connection(&mut self) {
         if self.checking { return; }
+        self.last_check = Instant::now();
         self.checking = true;
         self.connection = ui::Connection::Unknown;
         self.last_checked_pair = Some((self.settings.address.clone(), self.settings.token.clone()));
@@ -240,12 +275,31 @@ impl SynchroApp {
             address: self.settings.address.clone(),
             token: self.settings.token.clone(),
             auto_send: self.settings.auto_send,
+            watch_folder: self.settings.watch_folder.clone(),
+            watch_enabled: self.settings.watch_enabled,
         };
         let tx = self.tx.clone();
         std::thread::spawn(move || {
             let result = check_receiver(&settings);
             let _ = tx.send(Event::Connected(result));
         });
+    }
+
+    fn choose_watch_folder(&mut self) {
+        let tx = self.tx.clone();
+        std::thread::spawn(move || {
+            if let Some(folder) = rfd::FileDialog::new().pick_folder() {
+                let _ = tx.send(Event::FolderPicked(folder));
+            }
+        });
+    }
+
+    fn sync_watcher(&mut self) {
+        self.watcher.configure(
+            self.settings.watch_enabled,
+            &self.settings.watch_folder,
+            self.tx.clone(),
+        );
     }
 
     fn start(&mut self) {
@@ -264,6 +318,8 @@ impl SynchroApp {
         let settings = Settings {
             address: self.settings.address.clone(), token: self.settings.token.clone(),
             auto_send: self.settings.auto_send,
+            watch_folder: self.settings.watch_folder.clone(),
+            watch_enabled: self.settings.watch_enabled,
         };
         let tx = self.tx.clone();
         std::thread::spawn(move || {
@@ -278,16 +334,37 @@ impl eframe::App for SynchroApp {
         let mut new_files = false;
         while let Ok(event) = self.rx.try_recv() {
             match event {
-                Event::Status(s) => { self.status = s; self.progress = 0.0; }
+                Event::Status(s) => {
+                    self.current_file = s.strip_prefix("Uploading: ").map(str::to_owned);
+                    self.status = s;
+                    self.progress = 0.0;
+                }
                 Event::Progress(done, total) => {
                     if total > 0 { self.progress = done as f32 / total as f32; }
                 }
                 Event::Finished(result) => {
                     self.busy = false;
+                    self.current_file = None;
                     self.status = result.unwrap_or_else(|e| format!("Помилка передачі: {e}"));
                 }
                 Event::FileSent(path) => {
+                    if let Some(name) = path.file_name().and_then(|s| s.to_str()) {
+                        let size = path.metadata().map(|m| m.len()).unwrap_or(0);
+                        self.history.insert(0, SentItem { name: name.to_owned(), size });
+                        self.history.truncate(15);
+                    }
                     self.files.retain(|f| f != &path);
+                }
+                Event::FolderPicked(folder) => {
+                    self.settings.watch_folder = folder.to_string_lossy().into_owned();
+                    self.sync_watcher();
+                    self.persist_settings();
+                }
+                Event::WatchFile(path) => {
+                    if !self.files.contains(&path) && path.is_file() {
+                        self.add_path(path);
+                        new_files = true;
+                    }
                 }
                 Event::FilesPicked(files) => {
                     for file in files {
@@ -298,7 +375,7 @@ impl eframe::App for SynchroApp {
                 Event::Connected(result) => {
                     self.checking = false;
                     self.connection = match result {
-                        Ok(()) => ui::Connection::Online,
+                        Ok(info) => ui::Connection::Online(info),
                         Err(e) => ui::Connection::Offline(e),
                     };
                 }
@@ -320,6 +397,14 @@ impl eframe::App for SynchroApp {
             !self.settings.address.trim().is_empty() && !self.settings.token.trim().is_empty() {
             self.start();
         }
+        if !self.checking && !self.busy
+            && !self.settings.address.trim().is_empty()
+            && !self.settings.token.trim().is_empty()
+            && self.last_check.elapsed() > Duration::from_secs(20)
+        {
+            self.check_connection();
+        }
+        self.sync_watcher();
         // Render the real transfer state and controls; no simulated phones or QR codes.
         ui::render(ui, self);
         ui.ctx().request_repaint_after(Duration::from_millis(if self.busy || self.checking { 100 } else { 400 }));
