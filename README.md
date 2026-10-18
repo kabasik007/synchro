@@ -14,6 +14,14 @@ Synchro is an experimental open-source PC-to-phone file transfer utility. The Wi
 
 **Status: v0.2 source UI implemented, compile and transfer tests are still needed on your Windows/Android devices.** There are no pre-built EXE or APK release artifacts yet.
 
+## Затверджений дизайн / Approved design reference
+
+![Synchro desktop and Android target design](docs/design/synchro-target-2026-10.png)
+
+**Це цільовий макет Synchro для Windows і Android.** Вся наступна робота над інтерфейсом орієнтується на цю картинку. Дивись [дизайн-специфікацію та критерії готовності](docs/design/README.md).
+
+> The picture is a design target (mockup), not a screenshot of currently implemented features. Only show live connection status, transfer progress and device details after verifying real data.
+
 ## Modern desktop UI (v0.2)
 
 The desktop now uses a custom dark sidebar with **Передача / Пристрій / Налаштування / Про програму**, editable Android pairing, a native multi-file picker, drag-and-drop, a persistent pending queue, transfer progress and a real **Перевірити** connection test. The connectivity check calls authenticated `GET /health`, so **both** the Windows app and Android receiver must be updated to v0.2 for the green "Android онлайн" state.
