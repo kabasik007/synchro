@@ -2,6 +2,8 @@
 
 Transport: HTTP/1.1 POST /upload to Android TCP port 8765.
 
+v0.2 authenticated health probe: `GET /health HTTP/1.1` with `X-Synchro-Token`. A matching token and running receiver returns HTTP 200 with a small JSON status message. Missing/incorrect token returns HTTP 401. The PC must not display a connected state merely because an IP address was entered. Older Android v0.1 clients lack this health route and must be rebuilt.
+
 Required headers:
 - X-Synchro-Token: 32-character random hex secret shown in Android app
 - X-Synchro-Name: percent-encoded UTF-8 basename
