@@ -10,6 +10,7 @@ use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::{Duration, Instant};
+use std::net::IpAddr;
 
 mod ui;
 mod watch;
@@ -63,6 +64,25 @@ fn target_url(address: &str) -> Result<String, String> {
         || url.path() != "/" || url.query().is_some() || url.fragment().is_some()
     {
         return Err("Use only http://PHONE_IP:PORT (no path or credentials)".into());
+    }
+    // Pairing tokens must not be leaked to arbitrary public HTTP servers.
+    // Trusted private LAN, loopback (ADB forward), and Tailscale CGNAT are supported.
+    let hostname = url.host_str().unwrap_or_default();
+    let host = hostname.trim_start_matches('[').trim_end_matches(']');
+    let ip: IpAddr = host.parse().map_err(|_| {
+        "Використовуй IP-адресу Wi-Fi, Tailscale або 127.0.0.1 (без публічного домену)".to_string()
+    })?;
+    let allowed = match ip {
+        IpAddr::V4(addr) => {
+            let octets = addr.octets();
+            addr.is_private() || addr.is_loopback() ||
+                (octets[0] == 100 && (64..=127).contains(&octets[1]))
+        }
+        IpAddr::V6(addr) => addr.is_loopback() || addr.is_unique_local()
+            || addr.is_unicast_link_local(),
+    };
+    if !allowed {
+        return Err("Небезпечна публічна HTTP-адреса. Використовуй LAN або Tailscale.".into());
     }
     Ok(format!("{value}/upload"))
 }
@@ -440,5 +460,24 @@ mod tests {
     #[test]
     fn reject_https_path() {
         assert!(target_url("https://example.com:8765/path").is_err());
+    }
+    #[test]
+    fn tailscale_and_adb_hosts() {
+        assert!(target_url("http://100.111.22.33:8765").is_ok());
+        assert!(target_url("http://127.0.0.1:8765").is_ok());
+    }
+    #[test]
+    fn reject_public_or_untrusted_host() {
+        assert!(target_url("http://8.8.8.8:8765").is_err());
+        assert!(target_url("http://example.com:8765").is_err());
+        assert!(target_url("http://evil.com:8765/").is_err());
+    }
+    #[test]
+    fn decode_device_health() {
+        let info: DeviceInfo = serde_json::from_str(
+            r#"{"message":"ready","device":"Google Pixel 8","appVersion":"0.3.0","sdk":35}"#
+        ).unwrap();
+        assert_eq!(info.device, "Google Pixel 8");
+        assert_eq!(info.sdk, 35);
     }
 }
