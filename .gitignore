@@ -1,8 +1,10 @@
 /desktop/target/
 /android/.gradle/
+/android/.kotlin/
 /android/build/
 /android/app/build/
 /android/local.properties
+/android/gradle/wrapper/gradle-wrapper.jar
 *.apk
 *.aab
 *.exe
