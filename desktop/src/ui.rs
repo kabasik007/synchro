@@ -123,14 +123,16 @@ fn device_card(ui: &mut egui::Ui, app: &mut SynchroApp) {
         });
         ui.add_space(7.0);
         caption(ui, "Адреса приймача");
+        let address_width = ui.available_width();
         ui.add(egui::TextEdit::singleline(&mut app.settings.address)
             .hint_text("http://192.168.1.100:8765")
-            .desired_width(f32::INFINITY));
+            .desired_width(address_width));
         ui.add_space(7.0);
         caption(ui, "Код сполучення (32 символи)");
         ui.horizontal(|ui| {
+            let token_width = (ui.available_width() - 90.0).max(120.0);
             ui.add(egui::TextEdit::singleline(&mut app.settings.token)
-                .password(!app.show_token).desired_width((ui.available_width() - 90.0).max(120.0))
+                .password(!app.show_token).desired_width(token_width)
                 .hint_text("Встав код із Synchro Android"));
             if ui.button(if app.show_token { "Сховати" } else { "Показати" }).clicked() {
                 app.show_token = !app.show_token;
@@ -249,9 +251,10 @@ fn transfer(ui: &mut egui::Ui, app: &mut SynchroApp) {
     }
     ui.add_space(14.0);
     ui.horizontal(|ui| {
+        let send_width = (ui.available_width() * 0.52).max(220.0);
         if ui.add_enabled(!app.busy && !app.files.is_empty(),
             solid_button(format!("➤  Відправити зараз  ({})", app.files.len()), true,
-                (ui.available_width() * 0.52).max(220.0))).clicked() {
+                send_width)).clicked() {
             app.start();
         }
         if ui.add(solid_button("＋  Додати шлях", false, 162.0)).clicked() {
@@ -260,8 +263,9 @@ fn transfer(ui: &mut egui::Ui, app: &mut SynchroApp) {
     });
     if app.show_manual_path {
         ui.horizontal(|ui| {
+            let path_width = (ui.available_width() - 95.0).max(160.0);
             ui.add(egui::TextEdit::singleline(&mut app.manual_path)
-                .desired_width((ui.available_width() - 95.0).max(160.0))
+                .desired_width(path_width)
                 .hint_text(r"C:\builds\app-debug.apk"));
             if ui.button("Додати").clicked() {
                 let path = PathBuf::from(app.manual_path.trim());
@@ -271,8 +275,9 @@ fn transfer(ui: &mut egui::Ui, app: &mut SynchroApp) {
     }
     if app.busy {
         ui.add_space(5.0);
+        let progress_width = ui.available_width();
         ui.add(egui::ProgressBar::new(app.progress).show_percentage()
-            .fill(BLUE).desired_width(ui.available_width()));
+            .fill(BLUE).desired_width(progress_width));
     }
     ui.add_space(6.0);
     caption(ui, format!("Статус: {}", app.status));
