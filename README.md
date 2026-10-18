@@ -29,15 +29,17 @@ Or from repository root, use `scripts/build-windows.ps1`. The executable builds 
 
 ## Building Android receiver
 
-Requirements: Android Studio, SDK 36, JDK 17, Android Gradle Plugin 8.13.2, Gradle 8.13, Kotlin 2.3.0.
+Requirements: Android Studio, SDK 36, JDK 17, Android Gradle Plugin 8.13.2, Gradle **8.13** (not Gradle 9.x), Kotlin 2.3.0.
 
 1. Open the repository's `android` directory in Android Studio.
-2. Configure Gradle 8.13 via Android Studio (the v0.1 repo doesn't include wrapper binaries), or install Gradle 8.13 to run it manually.
-3. Run **Build → Build APK(s)**, or use:
+2. In **Settings → Build, Execution, Deployment → Build Tools → Gradle**, choose **Gradle Wrapper** (the project's `gradle-wrapper.properties`, not the local Gradle 9.6 installation). Set **Gradle JDK** to JDK 17.
+3. Sync Gradle. The repository pins Gradle 8.13, and the Windows `gradlew.bat` bootstraps the official Gradle 8.13 Wrapper JAR, verifying its SHA-256 against Gradle's published checksum on first run.
+4. Run **Build → Build APK(s)**, or use the following from PowerShell:
 
 ```powershell
 cd synchro\android
-gradle assembleDebug
+.\gradlew.bat --version
+.\gradlew.bat assembleDebug
 ```
 
 4. Install `android/app/build/outputs/apk/debug/app-debug.apk` on a physical Android 10+ device.
