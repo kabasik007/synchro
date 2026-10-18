@@ -12,7 +12,25 @@ Synchro is an experimental open-source PC-to-phone file transfer utility. The Wi
 - Stream uploads to **Download/Synchro/Debug/**, verifying SHA-256 before exposing the file.
 - Tap **Install APK** on Android to open the system installer. This requires Android confirmation.
 
-**Status: source MVP, not yet compiled or device-certified in this environment.** There are no pre-built EXE or APK release artifacts yet.
+**Status: v0.2 source UI implemented, compile and transfer tests are still needed on your Windows/Android devices.** There are no pre-built EXE or APK release artifacts yet.
+
+## Modern desktop UI (v0.2)
+
+The desktop now uses a custom dark sidebar with **Передача / Пристрій / Налаштування / Про програму**, editable Android pairing, a native multi-file picker, drag-and-drop, a persistent pending queue, transfer progress and a real **Перевірити** connection test. The connectivity check calls authenticated \`GET /health\`, so **both** the Windows app and Android receiver must be updated to v0.2 for the green "Android онлайн" state.
+
+QR pairing and automatically detected device names are **not** included yet: these controls are intentionally not simulated. Use the phone's actual IP address and 32-character pairing token.
+
+**After pulling the new code**, build both programs again, keeping Android's receiver open:
+
+\`\`\`powershell
+cd M:\projects\synchro
+git pull --ff-only
+cd desktop
+cargo check
+cargo run --release
+\`\`\`
+
+Build the corresponding new Android APK in Android Studio or using \`android\gradlew.bat assembleDebug\`. This is a source change and **has not been compile-tested on Windows** in this environment.
 
 ## Running the desktop sender on Windows
 
