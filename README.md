@@ -32,30 +32,29 @@ cargo run --release
 
 Build the corresponding new Android APK in Android Studio or using `android\gradlew.bat assembleDebug`. This is a source change and **has not been compile-tested on Windows** in this environment.
 
-## Android Gradle failure: "25.0.3"
+## Android JDK detection and Gradle 8.13
 
-If `android\gradlew.bat assembleDebug` reports only `25.0.3`, your command-line environment likely launches Java **25**, which Gradle **8.13** does not support. In Android Studio, the **Gradle JDK** selection can be independent of the PowerShell `JAVA_HOME` and `PATH`.
+Gradle 8.13 requires a compatible runtime; Java 8 and Java 25 cannot run it. PowerShell's `java -version` may report Java 8 from PATH even when Android Studio's Gradle JDK is different.
 
-From the repository root, prefer the version-aware PowerShell helper:
+From the repository root, use:
 
 ```powershell
 cd M:\projects\synchro
+git pull --ff-only
 .\scripts\build-android.ps1
 ```
 
-It selects an installed compatible JDK 17–23 (preferring `%LOCALAPPDATA%\AndoCart\toolchains\jdk17` when available), prints the selected Java version and Gradle version, and only reports success after verifying that the debug APK exists.
+The script searches JAVA_HOME, Android Studio's bundled JBR, `%USERPROFILE%\.jdks`, `%USERPROFILE%\.gradle\jdks`, AndoCart's toolchains, and several common JDK installation directories. It selects an installed Java 17–23 runtime and temporarily sets JAVA_HOME for the build only.
 
-Alternatively, for just this PowerShell session, point `JAVA_HOME` at your installed JDK 17 or 21:
+**If no compatible JDK is found:** In Android Studio > Settings > Build Tools > Gradle, inspect the full path of the selected Gradle JDK (for instance, JBR 21). Pass that directory explicitly:
 
 ```powershell
-$env:JAVA_HOME = "$env:LOCALAPPDATA\AndoCart\toolchains\jdk17"
-Test-Path "$env:JAVA_HOME\bin\java.exe"
-cd android
-.\gradlew.bat --version
-.\gradlew.bat assembleDebug
+.\scripts\build-android.ps1 -JdkHome "C:\full\path\to\jbr-21"
 ```
 
-If `Test-Path` returns `False`, find your actual JDK directory instead. Do **not** upgrade to Gradle 9.x for the Android Gradle Plugin 8.13.2. See the [Gradle Java compatibility matrix](https://docs.gradle.org/current/userguide/compatibility.html).
+Alternatively, install an independent JDK 17 using `winget install --exact --id EclipseAdoptium.Temurin.17.JDK` and restart PowerShell. The script never downloads or installs a JDK without your consent.
+
+Successful builds produce `android\app\build\outputs\apk\debug\app-debug.apk`.
 
 ## Running the desktop sender on Windows
 
