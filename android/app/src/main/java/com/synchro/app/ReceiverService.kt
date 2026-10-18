@@ -104,6 +104,7 @@ class ReceiverService : Service() {
 
     private fun reply(socket: Socket, code: Int, message: String) {
         val reason = when (code) {
+            200 -> "OK"
             201 -> "Created"
             400 -> "Bad Request"
             401 -> "Unauthorized"
@@ -124,8 +125,9 @@ class ReceiverService : Service() {
         val input = BufferedInputStream(socket.getInputStream(), 64 * 1024)
         try {
             val request = readLine(input, 512)
-            if (request != "POST /upload HTTP/1.1") {
-                reply(socket, 400, "Expected POST /upload HTTP/1.1")
+            val isHealthCheck = request == "GET /health HTTP/1.1"
+            if (!isHealthCheck && request != "POST /upload HTTP/1.1") {
+                reply(socket, 400, "Expected POST /upload or GET /health HTTP/1.1")
                 return
             }
             val fields = mutableMapOf<String, String>()
@@ -146,6 +148,10 @@ class ReceiverService : Service() {
                 .toByteArray(StandardCharsets.US_ASCII)
             if (!MessageDigest.isEqual(expectedToken, suppliedToken)) {
                 reply(socket, 401, "Pairing token not accepted")
+                return
+            }
+            if (isHealthCheck) {
+                reply(socket, 200, "Synchro Android receiver is ready")
                 return
             }
             val length = fields["content-length"]?.toLongOrNull()
