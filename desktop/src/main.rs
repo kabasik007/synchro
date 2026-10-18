@@ -15,7 +15,7 @@ mod ui;
 
 const MAX_SIZE: u64 = 2 * 1024 * 1024 * 1024;
 
-#[derive(Default, Serialize, Deserialize)]
+#[derive(Serialize, Deserialize)]
 struct Settings {
     address: String,
     token: String,
@@ -24,6 +24,12 @@ struct Settings {
 }
 
 fn default_auto_send() -> bool { true }
+
+impl Default for Settings {
+    fn default() -> Self {
+        Self { address: String::new(), token: String::new(), auto_send: true }
+    }
+}
 
 fn config_path() -> Option<PathBuf> {
     Some(dirs::config_dir()?.join("Synchro").join("settings.json"))
@@ -254,7 +260,7 @@ impl SynchroApp {
         }
         self.busy = true;
         self.progress = 0.0;
-        let files = std::mem::take(&mut self.files);
+        let files = self.files.clone(); // Remove each item only after Android confirms receipt.
         let settings = Settings {
             address: self.settings.address.clone(), token: self.settings.token.clone(),
             auto_send: self.settings.auto_send,
