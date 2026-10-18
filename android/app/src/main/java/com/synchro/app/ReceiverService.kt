@@ -29,6 +29,10 @@ class ReceiverService : Service() {
     companion object {
         @Volatile var running = false
             private set
+        @Volatile var bytesReceived: Long = 0
+            private set
+        @Volatile var bytesTotal: Long = 0
+            private set
         private const val CHANNEL_ID = "synchro-receiver"
         private const val NOTIFICATION_ID = 1001
         private const val MAX_HEADERS = 16 * 1024
@@ -81,6 +85,8 @@ class ReceiverService : Service() {
 
     override fun onDestroy() {
         running = false
+        bytesReceived = 0
+        bytesTotal = 0
         try { serverSocket?.close() } catch (_: Exception) {}
         worker.shutdownNow()
         super.onDestroy()
@@ -112,7 +118,14 @@ class ReceiverService : Service() {
             507 -> "Insufficient Storage"
             else -> "Server Error"
         }
-        val data = JSONObject().put("message", message).toString().toByteArray(StandardCharsets.UTF_8)
+        val payload = JSONObject().put("message", message)
+        if (code == 200) {
+            payload.put("protocol", 1)
+            payload.put("appVersion", "0.3.0")
+            payload.put("device", android.os.Build.MANUFACTURER + " " + android.os.Build.MODEL)
+            payload.put("sdk", android.os.Build.VERSION.SDK_INT)
+        }
+        val data = payload.toString().toByteArray(StandardCharsets.UTF_8)
         val headers = "HTTP/1.1 $code $reason\r\nContent-Type: application/json\r\n" +
             "Content-Length: ${data.size}\r\nConnection: close\r\n\r\n"
         socket.getOutputStream().write(headers.toByteArray(StandardCharsets.US_ASCII))
@@ -184,7 +197,14 @@ class ReceiverService : Service() {
                 reply(socket, 507, "Not enough free space")
                 return
             }
-            receiveFile(input, length, hash, name)
+            bytesTotal = length
+            bytesReceived = 0
+            try {
+                receiveFile(input, length, hash, name)
+            } finally {
+                bytesTotal = 0
+                bytesReceived = 0
+            }
             reply(socket, 201, "Saved to ${SynchroConfig.FOLDER}$name")
         } catch (e: Exception) {
             try { reply(socket, 400, e.message ?: "Upload failed") } catch (_: Exception) {}
@@ -217,6 +237,7 @@ class ReceiverService : Service() {
                     buffered.write(buffer, 0, n)
                     digest.update(buffer, 0, n)
                     remaining -= n
+                    bytesReceived = length - remaining
                 }
                 buffered.flush()
             } ?: throw IllegalStateException("Unable to open Downloads output")
