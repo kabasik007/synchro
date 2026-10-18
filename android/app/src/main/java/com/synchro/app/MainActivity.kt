@@ -1,3 +1,5 @@
+@file:Suppress("DEPRECATION")
+
 package com.synchro.app
 
 import android.Manifest
@@ -63,7 +65,6 @@ class MainActivity : Activity() {
         super.onCreate(savedInstanceState)
         window.statusBarColor = page
         window.navigationBarColor = page
-        @Suppress("DEPRECATION")
         window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR or
             View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
         val shell = LinearLayout(this).apply {
@@ -78,10 +79,8 @@ class MainActivity : Activity() {
                 top = bars.top
                 bottom = bars.bottom
             } else {
-                @Suppress("DEPRECATION")
-                top = insets.systemWindowInsetTop
-                @Suppress("DEPRECATION")
-                bottom = insets.systemWindowInsetBottom
+                        top = insets.systemWindowInsetTop
+                        bottom = insets.systemWindowInsetBottom
             }
             view.setPadding(dp(18), top + dp(12), dp(18), bottom + dp(12))
             insets
@@ -258,7 +257,8 @@ class MainActivity : Activity() {
         val running = ReceiverService.running
         status.text = if (running) "Готовий приймати файли" else "Приймач зупинено"
         detail.text = if (running) "Пристрій доступний у мережі · порт 8765"
-            else "Натисни «Почати приймання»"
+            else ReceiverService.lastError?.let { "Помилка запуску: " + it }
+                ?: "Натисни «Почати приймання»"
         statusCard.background = background(if (running) Color.rgb(234, 250, 242) else page,
             if (running) Color.rgb(210, 239, 223) else border)
         start.isEnabled = !running
