@@ -25,7 +25,7 @@ if (-not $DeviceId) {
 if ($DeviceId -notmatch '^emulator-[0-9]+$') {
     throw 'This script only supports emulator-* device identifiers.'
 }
-Write-Host "Forwarding localhost:8765 to $DeviceId:8765..." -ForegroundColor Cyan
+Write-Host "Forwarding localhost:8765 to $($DeviceId):8765..." -ForegroundColor Cyan
 & $adb -s $DeviceId forward tcp:8765 tcp:8765
 if ($LASTEXITCODE -ne 0) { throw "ADB port-forward failed (exit code $LASTEXITCODE)." }
 Write-Host "Use http://127.0.0.1:8765 in Synchro Desktop and the pairing token from the Android app." -ForegroundColor Green
