@@ -1,0 +1,12 @@
+/desktop/target/
+/android/.gradle/
+/android/build/
+/android/app/build/
+/android/local.properties
+*.apk
+*.aab
+*.exe
+*.keystore
+*.jks
+.idea/
+.vscode/
