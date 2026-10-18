@@ -32,6 +32,31 @@ cargo run --release
 
 Build the corresponding new Android APK in Android Studio or using `android\gradlew.bat assembleDebug`. This is a source change and **has not been compile-tested on Windows** in this environment.
 
+## Android Gradle failure: "25.0.3"
+
+If `android\gradlew.bat assembleDebug` reports only `25.0.3`, your command-line environment likely launches Java **25**, which Gradle **8.13** does not support. In Android Studio, the **Gradle JDK** selection can be independent of the PowerShell `JAVA_HOME` and `PATH`.
+
+From the repository root, prefer the version-aware PowerShell helper:
+
+```powershell
+cd M:\projects\synchro
+.\scripts\build-android.ps1
+```
+
+It selects an installed compatible JDK 17–23 (preferring `%LOCALAPPDATA%\AndoCart\toolchains\jdk17` when available), prints the selected Java version and Gradle version, and only reports success after verifying that the debug APK exists.
+
+Alternatively, for just this PowerShell session, point `JAVA_HOME` at your installed JDK 17 or 21:
+
+```powershell
+$env:JAVA_HOME = "$env:LOCALAPPDATA\AndoCart\toolchains\jdk17"
+Test-Path "$env:JAVA_HOME\bin\java.exe"
+cd android
+.\gradlew.bat --version
+.\gradlew.bat assembleDebug
+```
+
+If `Test-Path` returns `False`, find your actual JDK directory instead. Do **not** upgrade to Gradle 9.x for the Android Gradle Plugin 8.13.2. See the [Gradle Java compatibility matrix](https://docs.gradle.org/current/userguide/compatibility.html).
+
 ## Running the desktop sender on Windows
 
 Requirements: updated Rust stable (edition 2024) and C++ build tools for the Windows MSVC toolchain.
