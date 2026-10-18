@@ -23,7 +23,7 @@ pub enum Page {
 pub enum Connection {
     #[default]
     Unknown,
-    Online,
+    Online(DeviceInfo),
     Offline(String),
 }
 
@@ -57,7 +57,7 @@ fn nav_button(ui: &mut egui::Ui, text: &str, selected: bool) -> bool {
 
 fn status_text(connection: &Connection) -> (&'static str, Color32) {
     match connection {
-        Connection::Online => ("Android онлайн", GREEN),
+        Connection::Online(_) => ("Android онлайн", GREEN),
         Connection::Offline(_) => ("Немає зв'язку", c(249, 131, 107)),
         Connection::Unknown => ("Не перевірено", MUTED),
     }
@@ -69,7 +69,7 @@ fn sidebar(ui: &mut egui::Ui, app: &mut SynchroApp) {
         ui.label(RichText::new("ϟ").size(44.0).color(BLUE).strong());
         ui.vertical(|ui| {
             title(ui, "Synchro", 24.0);
-            caption(ui, "v0.2.0 · Rust + Android");
+            caption(ui, "v0.3.0 · Rust + Android");
         });
     });
     ui.add_space(35.0);
@@ -113,7 +113,11 @@ fn hero(ui: &mut egui::Ui, app: &SynchroApp) {
 fn device_card(ui: &mut egui::Ui, app: &mut SynchroApp) {
     card(ui, |ui| {
         ui.horizontal(|ui| {
-            title(ui, "▣  Android", 19.0);
+            let model = match &app.connection {
+                Connection::Online(info) => info.device.as_str(),
+                _ => "Android",
+            };
+            title(ui, format!("▣  {model}"), 19.0);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let label = if app.checking { "Перевіряємо…" } else { "↻ Перевірити" };
                 if ui.add_enabled(!app.checking, solid_button(label, false, 128.0)).clicked() {
@@ -121,6 +125,12 @@ fn device_card(ui: &mut egui::Ui, app: &mut SynchroApp) {
                 }
             });
         });
+        if let Connection::Online(info) = &app.connection {
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("●  Готовий до передачі").color(GREEN).size(13.0));
+                caption(ui, format!("Android API {} · Synchro {}", info.sdk, info.app_version));
+            });
+        }
         ui.add_space(7.0);
         caption(ui, "Адреса приймача");
         let address_width = ui.available_width();
@@ -142,6 +152,7 @@ fn device_card(ui: &mut egui::Ui, app: &mut SynchroApp) {
         ui.horizontal(|ui| {
             if ui.small_button("Зберегти").clicked() { app.persist_settings(); }
             if ui.small_button("Інструкція").clicked() { app.page = Page::Devices; }
+            if ui.small_button("Копіювати IP").clicked() { ui.ctx().copy_text(app.settings.address.clone()); }
         });
         if let Connection::Offline(reason) = &app.connection {
             ui.add_space(5.0);
@@ -195,6 +206,10 @@ fn queue_card(ui: &mut egui::Ui, app: &mut SynchroApp) {
                         ui.vertical(|ui| {
                             ui.label(RichText::new(name).color(LIGHT).size(13.0));
                             caption(ui, file_size(bytes));
+                            if app.current_file.as_deref() == Some(name.as_str()) {
+                                ui.add(egui::ProgressBar::new(app.progress)
+                                    .fill(BLUE).desired_width(135.0).show_percentage());
+                            }
                         });
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             if ui.add_enabled(!app.busy,
@@ -248,6 +263,19 @@ fn transfer(ui: &mut egui::Ui, app: &mut SynchroApp) {
         drop_card(ui, app);
         ui.add_space(10.0);
         queue_card(ui, app);
+    }
+    if !app.history.is_empty() {
+        ui.add_space(12.0);
+        card(ui, |ui| {
+            title(ui, "Останні відправлення", 16.0);
+            for item in app.history.iter().take(3) {
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("✓").color(GREEN));
+                    ui.label(RichText::new(&item.name).color(LIGHT).size(13.0));
+                    caption(ui, file_size(item.size));
+                });
+            }
+        });
     }
     ui.add_space(14.0);
     ui.horizontal(|ui| {
@@ -303,6 +331,14 @@ fn devices(ui: &mut egui::Ui, app: &mut SynchroApp) {
         ] { caption(ui, step); }
         ui.add_space(14.0);
         caption(ui, "Не відкривай порт 8765 в інтернет. Для віддаленої роботи використовуй Tailscale.");
+        ui.add_space(12.0);
+        title(ui, "Android Studio Emulator", 16.0);
+        caption(ui, "Для емулятора 10.0.2.15 не є прямою адресою з Windows.");
+        caption(ui, "Запусти: adb forward tcp:8765 tcp:8765");
+        caption(ui, "У Synchro Desktop введи: http://127.0.0.1:8765");
+        if ui.small_button("Скопіювати команду ADB").clicked() {
+            ui.ctx().copy_text("adb forward tcp:8765 tcp:8765".to_owned());
+        }
     });
 }
 
@@ -314,6 +350,21 @@ fn settings_page(ui: &mut egui::Ui, app: &mut SynchroApp) {
         ui.add_space(10.0);
         ui.checkbox(&mut app.settings.auto_send, "Автоматично відправляти файли після перетягування");
         caption(ui, "Вимкни для ручного підтвердження кожної відправки.");
+        ui.add_space(14.0);
+        title(ui, "Автоматичне відстеження папки", 17.0);
+        ui.checkbox(&mut app.settings.watch_enabled,
+            "Відстежувати нові файли й оновлення у папці збірок");
+        caption(ui, "APK буде додано до черги після стабілізації розміру та часу зміни.");
+        ui.horizontal(|ui| {
+            let input_width = (ui.available_width() - 155.0).max(160.0);
+            ui.add(egui::TextEdit::singleline(&mut app.settings.watch_folder)
+                .desired_width(input_width).hint_text(r"M:\projects\app\build\outputs\apk\debug"));
+            if ui.small_button("Вибрати папку").clicked() { app.choose_watch_folder(); }
+        });
+        if app.settings.watch_enabled && !std::path::Path::new(&app.settings.watch_folder).is_dir() {
+            ui.label(RichText::new("Вибери наявну папку перед увімкненням відстеження.")
+                .color(c(249, 131, 107)).size(12.0));
+        }
         ui.add_space(15.0);
         if ui.add(solid_button("Зберегти налаштування", true, 220.0)).clicked() {
             app.persist_settings();
@@ -322,7 +373,7 @@ fn settings_page(ui: &mut egui::Ui, app: &mut SynchroApp) {
     ui.add_space(12.0);
     card(ui, |ui| {
         title(ui, "Безпека", 18.0);
-        caption(ui, "Секретний код сполучення зберігається у профілі Windows.");
+        caption(ui, "Код сполучення зберігається локально у профілі Windows.");
         caption(ui, "У довіреній локальній мережі використовується HTTP; через інтернет — тільки Tailscale.");
         caption(ui, "Не передавай секретний код іншим людям.");
     });
@@ -330,7 +381,7 @@ fn settings_page(ui: &mut egui::Ui, app: &mut SynchroApp) {
 
 fn about(ui: &mut egui::Ui) {
     title(ui, "Synchro", 32.0);
-    caption(ui, "v0.2.0 · Open source · MIT");
+    caption(ui, "v0.3.0 · Open source · MIT");
     ui.add_space(18.0);
     card(ui, |ui| {
         title(ui, "Швидше, ніж пересилати через месенджер", 18.0);
@@ -346,6 +397,7 @@ pub fn configure_theme(ctx: &egui::Context) {
     ctx.set_theme(egui::Theme::Dark);
     let mut visuals = egui::Visuals::dark();
     visuals.panel_fill = c(10, 18, 34);
+    visuals.selection.bg_fill = BLUE.gamma_multiply(0.55);
     visuals.window_fill = c(10, 18, 34);
     visuals.extreme_bg_color = c(12, 21, 38);
     visuals.widgets.inactive.bg_fill = c(28, 41, 64);
