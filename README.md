@@ -33,7 +33,7 @@ Requirements: Android Studio, SDK 36, JDK 17, Android Gradle Plugin 8.13.2, Grad
 
 1. Open the repository's `android` directory in Android Studio.
 2. In **Settings → Build, Execution, Deployment → Build Tools → Gradle**, choose **Gradle Wrapper** (the project's `gradle-wrapper.properties`, not the local Gradle 9.6 installation). Set **Gradle JDK** to JDK 17.
-3. Sync Gradle. The repository pins Gradle 8.13, and the Windows `gradlew.bat` bootstraps the official Gradle 8.13 Wrapper JAR, verifying its SHA-256 against Gradle's published checksum on first run.
+3. Sync Gradle. The repository pins Gradle 8.13. The Windows `gradlew.bat` downloads the official Gradle 8.13 Wrapper JAR from Gradle's [v8.13.0 GitHub source tag](https://github.com/gradle/gradle/blob/v8.13.0/gradle/wrapper/gradle-wrapper.jar) (with GitHub API fallback), then verifies its SHA-256 against the [Gradle 8.13 release checksum](https://gradle.org/release-checksums/) on first run. The normal Gradle distribution ZIP is then downloaded by the verified wrapper.
 4. Run **Build → Build APK(s)**, or use the following from PowerShell:
 
 ```powershell
@@ -42,7 +42,7 @@ cd synchro\android
 .\gradlew.bat assembleDebug
 ```
 
-4. Install `android/app/build/outputs/apk/debug/app-debug.apk` on a physical Android 10+ device.
+5. Install `android/app/build/outputs/apk/debug/app-debug.apk` on a physical Android 10+ device.
 
 The local debug APK is automatically debug-signed by Android tooling, and is not a production-signed release.
 
