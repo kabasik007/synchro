@@ -8,6 +8,7 @@
     <application
         android:allowBackup="false"
         android:label="Synchro"
+        android:icon="@drawable/ic_synchro"
         android:theme="@android:style/Theme.Material.Light.NoActionBar"
         android:usesCleartextTraffic="true">
         <activity android:name=".MainActivity" android:exported="true">
