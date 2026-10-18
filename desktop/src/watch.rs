@@ -62,7 +62,9 @@ impl FolderWatch {
                 if flag.load(Ordering::SeqCst) { break; }
                 let current = scan(&folder);
                 for (path, sig) in &current {
-                    if previous.get(path) == Some(sig) && sent.get(path) != Some(sig) {
+                    let settled = SystemTime::now().duration_since(sig.1)
+                        .map(|age| age >= Duration::from_secs(3)).unwrap_or(false);
+                    if settled && previous.get(path) == Some(sig) && sent.get(path) != Some(sig) {
                         let _ = tx.send(Event::WatchFile(path.clone()));
                         sent.insert(path.clone(), *sig);
                     }
