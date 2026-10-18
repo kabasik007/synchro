@@ -51,7 +51,7 @@ class MainActivity : Activity() {
     private lateinit var transfer: TextView
     private lateinit var start: TextView
     private lateinit var stop: TextView
-    private var lastList = ""
+    private var lastList = "__initial__"
     private var pendingInstall: Pair<Uri, String>? = null
     private val handler = Handler(Looper.getMainLooper())
     private val timer = object : Runnable {
