@@ -6,7 +6,7 @@ description = "Synchro Rust desktop sender for Android"
 license = "MIT"
 
 [dependencies]
-eframe = { version = "=0.37.0", default-features = false, features = ["glow", "x11", "wayland"] }
+eframe = { version = "=0.37.0", default-features = false, features = ["glow", "default_fonts", "system_fonts", "x11", "wayland"] }
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
 sha2 = "0.10"
 percent-encoding = "2.3"
