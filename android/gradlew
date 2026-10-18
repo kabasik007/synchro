@@ -19,7 +19,7 @@ if [ ! -f "$JAR" ]; then
     mkdir -p "$APP_HOME/gradle/wrapper"
     tmp="$JAR.$$"
     trap 'rm -f "$tmp"' EXIT HUP INT TERM
-    url=https://services.gradle.org/distributions/gradle-8.13-wrapper.jar
+    url=https://raw.githubusercontent.com/gradle/gradle/v8.13.0/gradle/wrapper/gradle-wrapper.jar
     if command -v curl >/dev/null 2>&1; then
         curl --fail --location --silent --show-error --proto '=https' "$url" -o "$tmp"
     elif command -v wget >/dev/null 2>&1; then
