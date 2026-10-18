@@ -11,13 +11,19 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::Duration;
 
+mod ui;
+
 const MAX_SIZE: u64 = 2 * 1024 * 1024 * 1024;
 
 #[derive(Default, Serialize, Deserialize)]
 struct Settings {
     address: String,
     token: String,
+    #[serde(default = "default_auto_send")]
+    auto_send: bool,
 }
+
+fn default_auto_send() -> bool { true }
 
 fn config_path() -> Option<PathBuf> {
     Some(dirs::config_dir()?.join("Synchro").join("settings.json"))
@@ -55,6 +61,9 @@ enum Event {
     Status(String),
     Progress(u64, u64),
     Finished(Result<String, String>),
+    FileSent(PathBuf),
+    FilesPicked(Vec<PathBuf>),
+    Connected(Result<(), String>),
 }
 
 struct ProgressFile {
@@ -87,6 +96,28 @@ fn hex_digest(file: &Path) -> Result<String, String> {
         hasher.update(&buffer[..count]);
     }
     Ok(format!("{:x}", hasher.finalize()))
+}
+
+fn check_receiver(settings: &Settings) -> Result<(), String> {
+    if settings.token.trim().len() != 32 || !settings.token.trim().bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err("Спочатку введи правильний код сполучення (32 символи).".into());
+    }
+    let upload_url = target_url(&settings.address)?;
+    let health_url = upload_url.trim_end_matches("upload").to_owned() + "health";
+    let client = reqwest::blocking::Client::builder()
+        .connect_timeout(Duration::from_secs(3))
+        .timeout(Duration::from_secs(5))
+        .redirect(reqwest::redirect::Policy::none())
+        .build().map_err(|e| e.to_string())?;
+    let response = client.get(health_url)
+        .header("X-Synchro-Token", settings.token.trim())
+        .send().map_err(|e| format!("Телефон не відповідає: {e}"))?;
+    if response.status().is_success() {
+        Ok(())
+    } else {
+        Err(format!("Android повернув HTTP {}. Перевір код і версію Android Synchro.",
+            response.status()))
+    }
 }
 
 fn send_files(files: Vec<PathBuf>, settings: Settings, tx: Sender<Event>) -> Result<String, String> {
@@ -131,6 +162,7 @@ fn send_files(files: Vec<PathBuf>, settings: Settings, tx: Sender<Event>) -> Res
             return Err(format!("{name}: Android rejected upload ({code}): {reason}"));
         }
         sent_files += 1;
+        let _ = tx.send(Event::FileSent(path.clone()));
     }
     Ok(format!("Sent {sent_files} file(s) to Android · Download/Synchro/Debug"))
 }
@@ -144,6 +176,12 @@ struct SynchroApp {
     busy: bool,
     tx: Sender<Event>,
     rx: Receiver<Event>,
+    page: ui::Page,
+    connection: ui::Connection,
+    checking: bool,
+    last_checked_pair: Option<(String, String)>,
+    show_token: bool,
+    show_manual_path: bool,
 }
 
 impl Default for SynchroApp {
@@ -153,6 +191,9 @@ impl Default for SynchroApp {
             settings: load_settings(), files: vec![], manual_path: String::new(),
             status: "Pair Android, then drop APK/ZIP files here".into(),
             progress: 0.0, busy: false, tx, rx,
+            page: ui::Page::default(), connection: ui::Connection::default(),
+            checking: false, last_checked_pair: None,
+            show_token: false, show_manual_path: false,
         }
     }
 }
@@ -165,6 +206,42 @@ impl SynchroApp {
             self.status = "Drag a file, not a directory".into();
         }
     }
+    fn persist_settings(&mut self) {
+        match save_settings(&self.settings) {
+            Ok(()) => self.status = "Налаштування збережено.".into(),
+            Err(e) => self.status = format!("Не вдалося зберегти налаштування: {e}"),
+        }
+    }
+
+    fn choose_files(&mut self) {
+        let tx = self.tx.clone();
+        std::thread::spawn(move || {
+            if let Some(files) = rfd::FileDialog::new()
+                .set_title("Вибери файли для Synchro")
+                .pick_files()
+            {
+                let _ = tx.send(Event::FilesPicked(files));
+            }
+        });
+    }
+
+    fn check_connection(&mut self) {
+        if self.checking { return; }
+        self.checking = true;
+        self.connection = ui::Connection::Unknown;
+        self.last_checked_pair = Some((self.settings.address.clone(), self.settings.token.clone()));
+        let settings = Settings {
+            address: self.settings.address.clone(),
+            token: self.settings.token.clone(),
+            auto_send: self.settings.auto_send,
+        };
+        let tx = self.tx.clone();
+        std::thread::spawn(move || {
+            let result = check_receiver(&settings);
+            let _ = tx.send(Event::Connected(result));
+        });
+    }
+
     fn start(&mut self) {
         if self.busy || self.files.is_empty() { return; }
         if let Err(e) = target_url(&self.settings.address) {
@@ -180,6 +257,7 @@ impl SynchroApp {
         let files = std::mem::take(&mut self.files);
         let settings = Settings {
             address: self.settings.address.clone(), token: self.settings.token.clone(),
+            auto_send: self.settings.auto_send,
         };
         let tx = self.tx.clone();
         std::thread::spawn(move || {
@@ -191,6 +269,7 @@ impl SynchroApp {
 
 impl eframe::App for SynchroApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        let mut new_files = false;
         while let Ok(event) = self.rx.try_recv() {
             match event {
                 Event::Status(s) => { self.status = s; self.progress = 0.0; }
@@ -199,65 +278,60 @@ impl eframe::App for SynchroApp {
                 }
                 Event::Finished(result) => {
                     self.busy = false;
-                    self.status = result.unwrap_or_else(|e| format!("Transfer failed: {e}"));
+                    self.status = result.unwrap_or_else(|e| format!("Помилка передачі: {e}"));
                 }
+                Event::FileSent(path) => {
+                    self.files.retain(|f| f != &path);
+                }
+                Event::FilesPicked(files) => {
+                    for file in files {
+                        self.add_path(file);
+                        new_files = true;
+                    }
+                }
+                Event::Connected(result) => {
+                    self.checking = false;
+                    self.connection = match result {
+                        Ok(()) => ui::Connection::Online,
+                        Err(e) => ui::Connection::Offline(e),
+                    };
+                }
+            }
+        }
+        // A new IP or pairing token invalidates an older successful connection check.
+        if let Some((address, token)) = &self.last_checked_pair {
+            if self.settings.address != *address || self.settings.token != *token {
+                self.connection = ui::Connection::Unknown;
             }
         }
         let dropped: Vec<PathBuf> = ui.input(|input| input.raw.dropped_files.iter()
             .map(|f| f.path().to_path_buf()).collect());
-        let auto_send = !dropped.is_empty();
-        for file in dropped { self.add_path(file); }
-        ui.heading("Synchro  ·  PC → Android");
-        ui.label("Direct transfers over Wi-Fi or private Tailscale network");
-        ui.separator();
-        ui.label("Android address");
-        ui.text_edit_singleline(&mut self.settings.address)
-            .on_hover_text("Example: http://192.168.1.25:8765");
-        ui.label("Pairing token (shown in the Android app)");
-        ui.add(egui::TextEdit::singleline(&mut self.settings.token).password(true));
-        ui.separator();
-        ui.group(|ui| {
-            ui.heading("Drop APK / ZIP / any file here");
-            ui.label("Files dropped into this window are sent automatically when paired.");
-            ui.horizontal(|ui| {
-                ui.text_edit_singleline(&mut self.manual_path)
-                    .on_hover_text("Full file path (optional alternative to dragging)");
-                if ui.button("Add path").clicked() {
-                    let path = PathBuf::from(self.manual_path.trim());
-                    self.add_path(path);
-                }
-            });
-            for file in &self.files { ui.label(file.display().to_string()); }
-            ui.horizontal(|ui| {
-                if ui.add_enabled(!self.busy && !self.files.is_empty(), egui::Button::new("Send now")).clicked() {
-                    self.start();
-                }
-                if ui.add_enabled(!self.busy && !self.files.is_empty(), egui::Button::new("Clear queue")).clicked() {
-                    self.files.clear();
-                }
-            });
-        });
-        if auto_send && !self.busy && !self.settings.address.is_empty() && !self.settings.token.is_empty() {
+        for file in dropped {
+            self.add_path(file);
+            new_files = true;
+        }
+        if new_files && self.settings.auto_send && !self.busy &&
+            !self.settings.address.trim().is_empty() && !self.settings.token.trim().is_empty() {
             self.start();
         }
-        if self.busy { ui.add(egui::ProgressBar::new(self.progress).show_percentage()); }
-        ui.separator();
-        ui.label(&self.status);
-        ui.small("Android always asks for confirmation before an APK is installed.");
-        ui.small("Don't port-forward the receiver. Use Tailscale for remote transfers.");
-        ui.ctx().request_repaint_after(Duration::from_millis(150));
+        // Render the real transfer state and controls; no simulated phones or QR codes.
+        ui::render(ui, self);
+        ui.ctx().request_repaint_after(Duration::from_millis(if self.busy || self.checking { 100 } else { 400 }));
     }
 }
 
 fn main() -> eframe::Result {
     eframe::run_native(
         "Synchro", eframe::NativeOptions {
-            viewport: egui::ViewportBuilder::default().with_inner_size([650.0, 520.0])
-                .with_min_inner_size([520.0, 420.0])
+            viewport: egui::ViewportBuilder::default().with_inner_size([1180.0, 790.0])
+                .with_min_inner_size([850.0, 620.0])
                 .with_drag_and_drop(true),
             ..Default::default()
         },
-        Box::new(|_| Ok(Box::<SynchroApp>::default())),
+        Box::new(|cc| {
+            ui::configure_theme(&cc.egui_ctx);
+            Ok(Box::<SynchroApp>::default())
+        }),
     )
 }
 
