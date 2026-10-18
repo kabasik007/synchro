@@ -4,7 +4,7 @@
 
 Synchro is an experimental open-source PC-to-phone file transfer utility. The Windows/Linux sender is **Rust + egui** and the Android 10+ receiver is **native Kotlin**.
 
-## What v0.1 contains
+## What Synchro currently contains
 
 - Drag and drop APKs, ZIPs or other files into the Rust desktop window.
 - Configure phone address and secret token once; settings saved in your user's config directory.
@@ -12,7 +12,7 @@ Synchro is an experimental open-source PC-to-phone file transfer utility. The Wi
 - Stream uploads to **Download/Synchro/Debug/**, verifying SHA-256 before exposing the file.
 - Tap **Install APK** on Android to open the system installer. This requires Android confirmation.
 
-**Status: v0.2 source UI implemented, compile and transfer tests are still needed on your Windows/Android devices.** There are no pre-built EXE or APK release artifacts yet.
+**Status: Synchro v0.3 source update is in `main`. The refreshed Windows and Android versions still require a local compile and real-device transfer test.** There are no verified prebuilt release EXE/APK artifacts.
 
 ## Затверджений дизайн / Approved design reference
 
@@ -21,6 +21,33 @@ Synchro is an experimental open-source PC-to-phone file transfer utility. The Wi
 **Це цільовий макет Synchro для Windows і Android.** Вся наступна робота над інтерфейсом орієнтується на цю картинку. Дивись [дизайн-специфікацію та критерії готовності](docs/design/README.md).
 
 > The picture is a design target (mockup), not a screenshot of currently implemented features. Only show live connection status, transfer progress and device details after verifying real data.
+
+## Synchro v0.3: велике оновлення
+
+**[Changelog, test plan and known limitations](docs/RELEASE-0.3.md)** · [Approved design](docs/design/README.md)
+
+- **Windows:** actual Android identity, periodic connection test, progress in the file queue, recent successful transfers, stable-output-folder watcher, private-network receiver validation.
+- **Android:** card-based light layout, true receiver state, copied IP/token, list of files received, APK install permission handling, branded icon and health metadata.
+- **Android Studio Emulator:** `scripts/connect-emulator.ps1` forwards port 8765; use `http://127.0.0.1:8765` on Windows.
+- **Important:** QR pairing from the picture is an agreed future milestone, not a working feature yet.
+
+From the repository root, run:
+
+```powershell
+git pull --ff-only
+cd desktop
+cargo test
+cargo check
+cargo run --release
+```
+
+Build and test Android separately:
+
+```powershell
+cd M:\projects\synchro
+.\scripts\build-android.ps1
+.\scripts\connect-emulator.ps1
+```
 
 ## Modern desktop UI (v0.2)
 
