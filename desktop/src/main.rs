@@ -204,7 +204,7 @@ impl eframe::App for SynchroApp {
             }
         }
         let dropped: Vec<PathBuf> = ui.input(|input| input.raw.dropped_files.iter()
-            .filter_map(|f| f.path.clone()).collect());
+            .map(|f| f.path().to_path_buf()).collect());
         let auto_send = !dropped.is_empty();
         for file in dropped { self.add_path(file); }
         ui.heading("Synchro  ·  PC → Android");
@@ -253,7 +253,8 @@ fn main() -> eframe::Result {
     eframe::run_native(
         "Synchro", eframe::NativeOptions {
             viewport: egui::ViewportBuilder::default().with_inner_size([650.0, 520.0])
-                .with_min_inner_size([520.0, 420.0]),
+                .with_min_inner_size([520.0, 420.0])
+                .with_drag_and_drop(true),
             ..Default::default()
         },
         Box::new(|_| Ok(Box::<SynchroApp>::default())),
