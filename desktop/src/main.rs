@@ -223,7 +223,8 @@ impl eframe::App for SynchroApp {
                 ui.text_edit_singleline(&mut self.manual_path)
                     .on_hover_text("Full file path (optional alternative to dragging)");
                 if ui.button("Add path").clicked() {
-                    self.add_path(PathBuf::from(self.manual_path.trim()));
+                    let path = PathBuf::from(self.manual_path.trim());
+                    self.add_path(path);
                 }
             });
             for file in &self.files { ui.label(file.display().to_string()); }
