@@ -19,10 +19,12 @@ if ($env:LOCALAPPDATA) {
     $locations.Add((Join-Path $env:LOCALAPPDATA 'Programs\Android Studio\jbr'))
 }
 
-function Test-GradleCompatibleJdk([string]$home) {
-    if (-not $home) { return $false }
-    $java = Join-Path $home 'bin\java.exe'
-    $release = Join-Path $home 'release'
+function Test-GradleCompatibleJdk([string]$jdkDirectory) {
+    # PowerShell variables are case-insensitive; never use $home as a parameter
+    # because it collides with the built-in, read-only $HOME variable.
+    if (-not $jdkDirectory) { return $false }
+    $java = Join-Path $jdkDirectory 'bin\java.exe'
+    $release = Join-Path $jdkDirectory 'release'
     if (-not (Test-Path -LiteralPath $java -PathType Leaf)) { return $false }
     if (-not (Test-Path -LiteralPath $release -PathType Leaf)) { return $false }
     $info = Get-Content -LiteralPath $release -Raw
