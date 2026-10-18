@@ -33,12 +33,15 @@ class ReceiverService : Service() {
             private set
         @Volatile var bytesTotal: Long = 0
             private set
+        @Volatile var lastError: String? = null
+            private set
         private const val CHANNEL_ID = "synchro-receiver"
         private const val NOTIFICATION_ID = 1001
         private const val MAX_HEADERS = 16 * 1024
     }
 
     private var serverSocket: ServerSocket? = null
+    @Volatile private var activeSocket: Socket? = null
     private val worker = Executors.newSingleThreadExecutor()
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -54,12 +57,13 @@ class ReceiverService : Service() {
         val notice = Notification.Builder(this, CHANNEL_ID)
             .setContentTitle("Synchro is receiving")
             .setContentText("Ready for uploads · port ${SynchroConfig.PORT}")
-            .setSmallIcon(android.R.drawable.stat_sys_download)
+            .setSmallIcon(R.drawable.ic_synchro)
             .setContentIntent(open)
             .setOngoing(true)
             .build()
         startForeground(NOTIFICATION_ID, notice)
         worker.execute {
+            lastError = null
             try {
                 ServerSocket(SynchroConfig.PORT).use { server ->
                     serverSocket = server
@@ -67,13 +71,20 @@ class ReceiverService : Service() {
                     while (!Thread.currentThread().isInterrupted && !server.isClosed) {
                         val socket = server.accept()
                         // Sequential uploads to avoid uncontrolled memory/disk pressure.
-                        try { socket.use { handle(it) } } catch (_: Exception) { /* one bad client must not end service */ }
+                        activeSocket = socket
+                        try {
+                            socket.use { handle(it) }
+                        } catch (_: Exception) {
+                            // A malformed upload never ends the receiver service.
+                        } finally {
+                            activeSocket = null
+                        }
                     }
                 }
-            } catch (_: SocketException) {
-                // Expected on stop().
-            } catch (_: Exception) {
-                // Port in use or network unavailable.
+            } catch (e: SocketException) {
+                if (running) lastError = e.message
+            } catch (e: Exception) {
+                lastError = e.message ?: "Unable to bind receiver port"
             } finally {
                 running = false
                 stopSelf()
@@ -88,6 +99,7 @@ class ReceiverService : Service() {
         bytesReceived = 0
         bytesTotal = 0
         try { serverSocket?.close() } catch (_: Exception) {}
+        try { activeSocket?.close() } catch (_: Exception) {}
         worker.shutdownNow()
         super.onDestroy()
     }
