@@ -1,63 +1,125 @@
-# Synchro Android debug build: select a Gradle 8.13-compatible Java runtime
-# without changing machine-wide JAVA_HOME or PATH.
+# Synchro Android debug build: detect an installed JDK compatible with Gradle 8.13.
+# Works with Windows PowerShell 5.1 and PowerShell 7. Does not change machine settings.
+param(
+    [string]$JdkHome = ''
+)
+
 $ErrorActionPreference = 'Stop'
 $projectDir = Join-Path $PSScriptRoot '..\android'
+$previousJavaHome = $env:JAVA_HOME
+$candidates = New-Object 'System.Collections.Generic.List[string]'
 
-$locations = New-Object System.Collections.Generic.List[string]
-# The known local AndoCart toolchain is preferred for repeatable Kotlin builds.
-if ($env:LOCALAPPDATA) {
-    $locations.Add((Join-Path $env:LOCALAPPDATA 'AndoCart\toolchains\jdk17'))
+function Add-JdkCandidate([string]$candidatePath) {
+    if ([string]::IsNullOrWhiteSpace($candidatePath)) { return }
+    try {
+        $normalized = [System.IO.Path]::GetFullPath($candidatePath.Trim().Trim('"'))
+    } catch {
+        return
+    }
+    if ((Test-Path -LiteralPath $normalized -PathType Container) -and -not $candidates.Contains($normalized)) {
+        $candidates.Add($normalized)
+    }
 }
-if ($env:JAVA_HOME) {
-    $locations.Add($env:JAVA_HOME)
+
+function Get-InstalledJdk([string]$jdkDirectory) {
+    if ([string]::IsNullOrWhiteSpace($jdkDirectory)) { return $null }
+    $exe = Join-Path $jdkDirectory 'bin\java.exe'
+    $release = Join-Path $jdkDirectory 'release'
+    if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) { return $null }
+    if (-not (Test-Path -LiteralPath $release -PathType Leaf)) { return $null }
+    $info = Get-Content -LiteralPath $release -Raw
+    if ($info -notmatch '(?m)^JAVA_VERSION="?([0-9]+)(?:\.([0-9]+))?') { return $null }
+    $major = [int]$Matches[1]
+    $versionMatch = [regex]::Match($info, '(?m)^JAVA_VERSION="?([^"\r\n]+)')
+    $version = if ($versionMatch.Success) { $versionMatch.Groups[1].Value } else { "$major" }
+    return [pscustomobject]@{
+        Directory = $jdkDirectory
+        Major = $major
+        Version = $version
+        Compatible = ($major -ge 17 -and $major -le 23)
+    }
+}
+
+# Explicit overrides take priority. Never silently ignore an invalid override.
+if (-not [string]::IsNullOrWhiteSpace($JdkHome)) {
+    Add-JdkCandidate $JdkHome
+    $explicitJdk = Get-InstalledJdk $JdkHome
+    if ($null -eq $explicitJdk -or -not $explicitJdk.Compatible) {
+        throw "The supplied -JdkHome is not a compatible JDK (Java 17-23): $JdkHome"
+    }
+}
+
+# Typical fixed locations and configured JAVA_HOME.
+Add-JdkCandidate $env:JAVA_HOME
+if ($env:LOCALAPPDATA) {
+    Add-JdkCandidate (Join-Path $env:LOCALAPPDATA 'AndoCart\toolchains\jdk17')
+    Add-JdkCandidate (Join-Path $env:LOCALAPPDATA 'Programs\Android Studio\jbr')
 }
 if ($env:ProgramFiles) {
-    $locations.Add((Join-Path $env:ProgramFiles 'Android\Android Studio\jbr'))
-    $locations.Add((Join-Path $env:ProgramFiles 'Eclipse Adoptium'))
+    Add-JdkCandidate (Join-Path $env:ProgramFiles 'Android\Android Studio\jbr')
+}
+
+# Android Studio can register a separate JBR 21 under ~/.jdks; most JDK installers
+# also put a versioned child directory under Program Files.
+$scanRoots = New-Object 'System.Collections.Generic.List[string]'
+if ($env:USERPROFILE) {
+    $scanRoots.Add((Join-Path $env:USERPROFILE '.jdks'))
+    $scanRoots.Add((Join-Path $env:USERPROFILE '.gradle\jdks'))
 }
 if ($env:LOCALAPPDATA) {
-    $locations.Add((Join-Path $env:LOCALAPPDATA 'Programs\Android Studio\jbr'))
+    $scanRoots.Add((Join-Path $env:LOCALAPPDATA 'AndoCart\toolchains'))
+    $scanRoots.Add((Join-Path $env:LOCALAPPDATA 'Programs\Android Studio'))
 }
-
-function Test-GradleCompatibleJdk([string]$jdkDirectory) {
-    # PowerShell variables are case-insensitive; never use $home as a parameter
-    # because it collides with the built-in, read-only $HOME variable.
-    if (-not $jdkDirectory) { return $false }
-    $java = Join-Path $jdkDirectory 'bin\java.exe'
-    $release = Join-Path $jdkDirectory 'release'
-    if (-not (Test-Path -LiteralPath $java -PathType Leaf)) { return $false }
-    if (-not (Test-Path -LiteralPath $release -PathType Leaf)) { return $false }
-    $info = Get-Content -LiteralPath $release -Raw
-    if ($info -match '(?m)^JAVA_VERSION="?([0-9]+)') {
-        $major = [int]$Matches[1]
-        return ($major -ge 17 -and $major -le 23)
-    }
-    return $false
-}
-
-$jdk = $null
-foreach ($location in $locations) {
-    if (Test-GradleCompatibleJdk $location) {
-        $jdk = $location
-        break
+if ($env:ProgramFiles) {
+    foreach ($folder in @('Eclipse Adoptium', 'Microsoft', 'Java', 'Amazon Corretto', 'Zulu',
+                          'BellSoft', 'Android', 'JetBrains')) {
+        $scanRoots.Add((Join-Path $env:ProgramFiles $folder))
     }
 }
-if (-not $jdk) {
-    throw @'
-No compatible JDK was found for Gradle 8.13.
-Install JDK 17 or 21, or point JAVA_HOME at its installation directory.
-Java 25 is not supported by Gradle 8.13.
-Quick fix: $env:JAVA_HOME = "$env:LOCALAPPDATA\AndoCart\toolchains\jdk17"
-'@
+
+foreach ($root in $scanRoots) {
+    if (-not (Test-Path -LiteralPath $root -PathType Container)) { continue }
+    Add-JdkCandidate $root
+    foreach ($child in (Get-ChildItem -LiteralPath $root -Directory -ErrorAction SilentlyContinue)) {
+        Add-JdkCandidate $child.FullName
+        # For Android Studio's own bundled runtime and one extra nested JDK level.
+        if ($child.Name -match '^(Android Studio|jdk|jbr|temurin|adoptium)' -or
+            $root -like '*\.gradle\jdks') {
+            foreach ($nested in (Get-ChildItem -LiteralPath $child.FullName -Directory -ErrorAction SilentlyContinue)) {
+                if ($nested.Name -in @('jbr', 'jdk', 'Contents', 'Home') -or $root -like '*\.gradle\jdks') {
+                    Add-JdkCandidate $nested.FullName
+                }
+            }
+        }
+    }
 }
 
-$env:JAVA_HOME = (Resolve-Path -LiteralPath $jdk).Path
-$releaseInfo = Get-Content -LiteralPath (Join-Path $env:JAVA_HOME 'release') -Raw
-$version = [regex]::Match($releaseInfo, '(?m)^JAVA_VERSION="([^"]+)"').Groups[1].Value
-Write-Host ("Synchro: using JDK {0} from {1}" -f $version, $env:JAVA_HOME) -ForegroundColor Cyan
+$selected = $null
+foreach ($candidate in $candidates) {
+    $found = Get-InstalledJdk $candidate
+    if ($null -eq $found) { continue }
+    if ($found.Compatible) {
+        Write-Host ("Found compatible Java {0}: {1}" -f $found.Version, $found.Directory) -ForegroundColor DarkCyan
+        if ($null -eq $selected) { $selected = $found }
+    } else {
+        Write-Host ("Skipping incompatible Java {0}: {1}" -f $found.Version, $found.Directory) -ForegroundColor Yellow
+    }
+}
+
+if ($null -eq $selected) {
+    Write-Host 'Synchro could not find an installed JDK 17-23.' -ForegroundColor Yellow
+    Write-Host 'Look at Android Studio > Settings > Build Tools > Gradle > Gradle JDK.'
+    Write-Host 'If JBR 21 is selected there, copy its full directory path and run:'
+    Write-Host '  .\scripts\build-android.ps1 -JdkHome "C:\path\to\jbr-21"'
+    Write-Host 'Alternatively install JDK 17, reopen PowerShell, then retry:'
+    Write-Host '  winget install --exact --id EclipseAdoptium.Temurin.17.JDK'
+    throw 'A compatible JDK is required to build the Android APK. Java 8 and Java 25 are not supported by Gradle 8.13.'
+}
 
 Push-Location $projectDir
 try {
+    $env:JAVA_HOME = $selected.Directory
+    Write-Host ("Synchro: using Java {0} at {1}" -f $selected.Version, $env:JAVA_HOME) -ForegroundColor Cyan
     & '.\gradlew.bat' --version
     if ($LASTEXITCODE -ne 0) { throw "Gradle launcher failed (exit code $LASTEXITCODE)." }
     & '.\gradlew.bat' assembleDebug
@@ -65,9 +127,10 @@ try {
 
     $apk = Join-Path $projectDir 'app\build\outputs\apk\debug\app-debug.apk'
     if (-not (Test-Path -LiteralPath $apk -PathType Leaf)) {
-        throw "Gradle returned success, but the expected APK was not found: $apk"
+        throw "Gradle returned success but the APK is missing: $apk"
     }
     Write-Host "Synchro Android APK: $apk" -ForegroundColor Green
 } finally {
+    $env:JAVA_HOME = $previousJavaHome
     Pop-Location
 }
