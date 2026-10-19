@@ -63,6 +63,11 @@ class MainActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        val savedUri = savedInstanceState?.getString("pending_apk_uri")
+        val savedName = savedInstanceState?.getString("pending_apk_name")
+        if (savedUri != null && savedName != null) {
+            pendingInstall = Uri.parse(savedUri) to savedName
+        }
         window.statusBarColor = page
         window.navigationBarColor = page
         window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR or
@@ -335,6 +340,14 @@ class MainActivity : Activity() {
         } catch (e: Exception) {
             toast("Не вдалося відкрити: " + e.message)
         }
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        pendingInstall?.let {
+            outState.putString("pending_apk_uri", it.first.toString())
+            outState.putString("pending_apk_name", it.second)
+        }
+        super.onSaveInstanceState(outState)
     }
 
     override fun onResume() {
