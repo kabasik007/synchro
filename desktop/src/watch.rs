@@ -21,8 +21,8 @@ fn eligible(path: &Path, size: u64) -> bool {
         return false;
     }
     let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-    !name.starts_with('.') && !name.ends_with(".tmp") && !name.ends_with(".part")
-        && !name.ends_with(".crdownload")
+    // This watcher is intended for Android build outputs, not arbitrary private files.
+    !name.starts_with('.') && name.to_ascii_lowercase().ends_with(".apk")
 }
 
 fn scan(dir: &Path) -> HashMap<PathBuf, Signature> {
@@ -30,7 +30,9 @@ fn scan(dir: &Path) -> HashMap<PathBuf, Signature> {
     let Ok(entries) = std::fs::read_dir(dir) else { return found };
     for entry in entries.flatten() {
         let path = entry.path();
-        let Ok(meta) = entry.metadata() else { continue };
+        // Symlinks/reparse-file links must not escape the user's selected output folder.
+        let Ok(meta) = std::fs::symlink_metadata(&path) else { continue };
+        if meta.file_type().is_symlink() { continue; }
         if !meta.is_file() || !eligible(&path, meta.len()) { continue; }
         let stamp = meta.modified().unwrap_or(SystemTime::UNIX_EPOCH);
         found.insert(path, (meta.len(), stamp));
@@ -63,7 +65,7 @@ impl FolderWatch {
                 let current = scan(&folder);
                 for (path, sig) in &current {
                     let settled = SystemTime::now().duration_since(sig.1)
-                        .map(|age| age >= Duration::from_secs(3)).unwrap_or(false);
+                        .map(|age| age >= Duration::from_secs(8)).unwrap_or(false);
                     if settled && previous.get(path) == Some(sig) && sent.get(path) != Some(sig) {
                         let _ = tx.send(Event::WatchFile(path.clone()));
                         sent.insert(path.clone(), *sig);
@@ -89,6 +91,9 @@ mod tests {
     #[test]
     fn ignores_transient_and_empty_files() {
         assert!(!eligible(Path::new("build.apk.part"), 512));
+        assert!(!eligible(Path::new("private.txt"), 512));
+        assert!(!eligible(Path::new("build.zip"), 512));
+        assert!(eligible(Path::new("BUILD.APK"), 512));
         assert!(!eligible(Path::new("build.apk.tmp"), 512));
         assert!(!eligible(Path::new(".hidden.apk"), 512));
         assert!(!eligible(Path::new("build.apk"), 0));
