@@ -22,7 +22,18 @@ Synchro is an experimental open-source PC-to-phone file transfer utility. The Wi
 
 > The picture is a design target (mockup), not a screenshot of currently implemented features. Only show live connection status, transfer progress and device details after verifying real data.
 
-> **Security gate (2026-10-19):** The [independent v0.4.1 security audit](docs/SECURITY-AUDIT-0.4.1-2026-10-19.md) identifies high-priority upload/prune races, an unsafe root-bootstrap symlink overwrite scenario, missing DoS limits and unauthenticated-in-the-cryptographic-sense delivery acknowledgement. **Do not expose this MVP as a publicly trusted file service until these findings are remediated and integration tests pass.** The browser relay is not end-to-end encrypted.
+> **Security gate:** The v0.4.1 [security audit](docs/SECURITY-AUDIT-0.4.1-2026-10-19.md) was followed by [v0.4.2 mitigations](docs/RELEASE-0.4.2.md). **Do not expose the service to untrusted users until Rust compilation, Nginx checks and end-to-end tests pass.** End-to-end encryption and production multi-user access controls are not implemented.
+
+## Synchro v0.4.2 — Security Hotfix (verification pending)
+
+**[Security hotfix and safe aaPanel instructions](docs/RELEASE-0.4.2.md)** · [Original security audit](docs/SECURITY-AUDIT-0.4.1-2026-10-19.md)
+
+- Serialized remote file changes and pruning; recheck PUT state after body reads.
+- Bounded WebSocket sessions, downloads, HTTP request rates/connections and streamed Nginx responses.
+- Initial receiver-side backup grace after ACK; browser requires a verified SHA-256 download before enabling delivery confirmation.
+- **Root bootstrap no longer writes to website folders.** It stages assets under root-owned `/opt/synchro/staged-web` for a separate unprivileged publisher.
+- First add Nginx limit zones to `http {}`, then the Synchro vhost snippet to `server {}`. Always run `nginx -t` before reload.
+- **Not E2EE, not yet compiled/deployed or end-to-end tested.** Do not entrust confidential files or public multi-user access to this release candidate.
 
 ## Synchro v0.4.1 — aaPanel browser installer
 
