@@ -42,6 +42,8 @@ class ReceiverService : Service() {
             private set
         @Volatile var lastError: String? = null
             private set
+        @Volatile var lastTransferError: String? = null
+            private set
         private const val CHANNEL_ID = "synchro-receiver"
         private const val NOTIFICATION_ID = 1001
         private const val MAX_HEADERS = 16 * 1024
@@ -74,6 +76,7 @@ class ReceiverService : Service() {
         startForeground(NOTIFICATION_ID, notice)
         worker.execute {
             lastError = null
+            lastTransferError = null
             try {
                 cleanupPendingUploads()
                 ServerSocket(SynchroConfig.PORT).use { server ->
@@ -296,8 +299,10 @@ class ReceiverService : Service() {
                 bytesReceived = 0
                 uploadSlot.release()
             }
+            lastTransferError = null
             reply(socket, 201, "Saved to ${SynchroConfig.FOLDER}$name")
         } catch (e: Exception) {
+            lastTransferError = (e.message ?: "Transfer failed").take(180)
             val status = when {
                 outOfSpace(e) -> 507
                 e is SocketTimeoutException -> 408
