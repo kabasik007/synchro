@@ -22,6 +22,18 @@ Synchro is an experimental open-source PC-to-phone file transfer utility. The Wi
 
 > The picture is a design target (mockup), not a screenshot of currently implemented features. Only show live connection status, transfer progress and device details after verifying real data.
 
+## v0.3.1 Stability Update
+
+The fixes from the [v0.3 bug audit](docs/AUDIT-0.3-2026-10-19.md) have been implemented in source. **[Read the v0.3.1 fix list and regression tests](docs/RELEASE-0.3.1.md).** These changes have not yet been compiled and validated on your local Windows/Android devices.
+
+- Queue restored after restart, saved with backup, automatically drained when new files arrive during upload.
+- Per-path progress and build-change detection protect multiple same-named APK outputs.
+- Safer APK-only folder watcher with stable-file delay.
+- Android supports health checks during a file upload, bounded clients, stricter deadlines, MediaStore cleanup and true Downloads storage checks.
+- APK installer permission state and user-visible last transfer errors are improved.
+
+Run from the repository root: `.\scripts\verify-local.ps1 -Android` (requires Rust + Android SDK + JDK). Pair and send a test file before relying on automation.
+
 ## Synchro v0.3: велике оновлення
 
 **[Changelog, test plan and known limitations](docs/RELEASE-0.3.md)** · [Approved design](docs/design/README.md)
