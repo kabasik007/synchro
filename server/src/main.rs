@@ -314,6 +314,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/api/v1/setup/check", get(setup::check))
         .route("/api/v1/setup/finish", post(setup::finish))
         .route("/api/v1/admin/origin", post(setup::update_origin))
+        .route("/api/v1/admin/stats", get(setup::stats))
         .route("/api/v1/admin/devices", post(api::register_device))
         .route("/api/v1/admin/devices/{id}/revoke", post(api::revoke_device))
         .route("/api/v1/admin/prune", post(api::prune))
