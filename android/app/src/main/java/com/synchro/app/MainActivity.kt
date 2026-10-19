@@ -272,9 +272,12 @@ class MainActivity : Activity() {
         stop.alpha = if (running) 1f else 0.55f
         val done = ReceiverService.bytesReceived
         val total = ReceiverService.bytesTotal
-        transfer.text = if (running && total > 0) {
-            "Передавання: " + formatSize(done) + " / " + formatSize(total)
-        } else ""
+        transfer.text = when {
+            running && total > 0 -> "Передавання: " + formatSize(done) + " / " + formatSize(total)
+            ReceiverService.lastTransferError != null ->
+                "Помилка останньої передачі: " + ReceiverService.lastTransferError
+            else -> ""
+        }
         try {
             val list = queryFiles()
             val signature = list.joinToString("|") { it.uri.toString() + it.size + it.timestamp }
