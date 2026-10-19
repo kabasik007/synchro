@@ -31,13 +31,15 @@ struct Settings {
     watch_folder: String,
     #[serde(default)]
     watch_enabled: bool,
+    #[serde(default)]
+    watch_all_files: bool,
 }
 
 fn default_auto_send() -> bool { true }
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { address: String::new(), token: String::new(), recipient_id: String::new(), auto_send: true, watch_folder: String::new(), watch_enabled: false }
+        Self { address: String::new(), token: String::new(), recipient_id: String::new(), auto_send: true, watch_folder: String::new(), watch_enabled: false, watch_all_files: false }
     }
 }
 
@@ -305,6 +307,7 @@ struct SynchroApp {
     watcher: watch::FolderWatch,
     applied_watch_enabled: bool,
     applied_watch_folder: String,
+    applied_watch_all_files: bool,
     last_check: Instant,
 }
 
@@ -315,6 +318,7 @@ impl Default for SynchroApp {
         Self {
             applied_watch_enabled: settings.watch_enabled,
             applied_watch_folder: settings.watch_folder.clone(),
+            applied_watch_all_files: settings.watch_all_files,
             settings, files: load_queue(), manual_path: String::new(),
             status: "Pair Android, then drop APK/ZIP files here".into(),
             progress: 0.0, busy: false, tx, rx,
@@ -341,6 +345,7 @@ impl SynchroApp {
             Ok(()) => {
                 self.applied_watch_enabled = self.settings.watch_enabled;
                 self.applied_watch_folder = self.settings.watch_folder.clone();
+                self.applied_watch_all_files = self.settings.watch_all_files;
                 self.sync_watcher();
                 self.status = "Налаштування збережено.".into();
             },
@@ -373,6 +378,7 @@ impl SynchroApp {
             auto_send: self.settings.auto_send,
             watch_folder: self.settings.watch_folder.clone(),
             watch_enabled: self.settings.watch_enabled,
+            watch_all_files: self.settings.watch_all_files,
         };
         let tx = self.tx.clone();
         std::thread::spawn(move || {
@@ -394,6 +400,7 @@ impl SynchroApp {
         self.watcher.configure(
             self.applied_watch_enabled,
             &self.applied_watch_folder,
+            self.applied_watch_all_files,
             self.tx.clone(),
         );
     }
@@ -420,6 +427,7 @@ impl SynchroApp {
             auto_send: self.settings.auto_send,
             watch_folder: self.settings.watch_folder.clone(),
             watch_enabled: self.settings.watch_enabled,
+            watch_all_files: self.settings.watch_all_files,
         };
         let tx = self.tx.clone();
         std::thread::spawn(move || {

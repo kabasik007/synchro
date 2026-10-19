@@ -417,12 +417,15 @@ fn settings_page(ui: &mut egui::Ui, app: &mut SynchroApp) {
         ui.add_space(14.0);
         title(ui, "Автоматичне відстеження папки", 17.0);
         ui.checkbox(&mut app.settings.watch_enabled,
-            "Відстежувати нові файли й оновлення у папці збірок");
-        caption(ui, "APK буде додано до черги після стабілізації розміру та часу зміни.");
+            "Відстежувати нові або змінені файли у вибраній папці");
+        caption(ui, "Програма бере лише файли з цієї папки (без підпапок), нові або змінені після запуску.");
+        ui.checkbox(&mut app.settings.watch_all_files,
+            "Надсилати всі типи файлів: фото, відео, документи, APK");
+        caption(ui, "Типово лише APK. Не вибирай папки із секретними або системними файлами.");
         ui.horizontal(|ui| {
             let input_width = (ui.available_width() - 155.0).max(160.0);
             ui.add(egui::TextEdit::singleline(&mut app.settings.watch_folder)
-                .desired_width(input_width).hint_text(r"M:\projects\app\build\outputs\apk\debug"));
+                .desired_width(input_width).hint_text(r"M:\projects\SynchroShare"));
             if ui.small_button("Вибрати папку").clicked() { app.choose_watch_folder(); }
         });
         if app.settings.watch_enabled && !std::path::Path::new(&app.settings.watch_folder).is_dir() {

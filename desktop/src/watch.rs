@@ -12,20 +12,24 @@ type Signature = (u64, SystemTime);
 
 #[derive(Default)]
 pub struct FolderWatch {
-    config: Option<(bool, String)>,
+    config: Option<(bool, String, bool)>,
     stop: Option<Arc<AtomicBool>>,
 }
 
-fn eligible(path: &Path, size: u64) -> bool {
+fn eligible(path: &Path, size: u64, all_files: bool) -> bool {
     if size == 0 || size > crate::MAX_SIZE {
         return false;
     }
     let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
     // This watcher is intended for Android build outputs, not arbitrary private files.
-    !name.starts_with('.') && name.to_ascii_lowercase().ends_with(".apk")
+    !name.starts_with('.')
+        && !name.starts_with('~')
+        && !name.to_ascii_lowercase().ends_with(".tmp")
+        && !name.to_ascii_lowercase().ends_with(".part")
+        && (all_files || name.to_ascii_lowercase().ends_with(".apk"))
 }
 
-fn scan(dir: &Path) -> HashMap<PathBuf, Signature> {
+fn scan(dir: &Path, all_files: bool) -> HashMap<PathBuf, Signature> {
     let mut found = HashMap::new();
     let Ok(entries) = std::fs::read_dir(dir) else { return found };
     for entry in entries.flatten() {
@@ -33,7 +37,7 @@ fn scan(dir: &Path) -> HashMap<PathBuf, Signature> {
         // Symlinks/reparse-file links must not escape the user's selected output folder.
         let Ok(meta) = std::fs::symlink_metadata(&path) else { continue };
         if meta.file_type().is_symlink() { continue; }
-        if !meta.is_file() || !eligible(&path, meta.len()) { continue; }
+        if !meta.is_file() || !eligible(&path, meta.len(), all_files) { continue; }
         let stamp = meta.modified().unwrap_or(SystemTime::UNIX_EPOCH);
         found.insert(path, (meta.len(), stamp));
     }
@@ -41,8 +45,8 @@ fn scan(dir: &Path) -> HashMap<PathBuf, Signature> {
 }
 
 impl FolderWatch {
-    pub fn configure(&mut self, enabled: bool, path: &str, tx: Sender<Event>) {
-        let next = (enabled, path.trim().to_owned());
+    pub fn configure(&mut self, enabled: bool, path: &str, all_files: bool, tx: Sender<Event>) {
+        let next = (enabled, path.trim().to_owned(), all_files);
         if self.config.as_ref() == Some(&next) {
             return;
         }
@@ -57,12 +61,12 @@ impl FolderWatch {
         self.stop = Some(flag.clone());
         std::thread::spawn(move || {
             let folder = PathBuf::from(next.1);
-            let mut previous = scan(&folder);
+            let mut previous = scan(&folder, next.2);
             let mut sent = previous.clone();
             while !flag.load(Ordering::SeqCst) {
                 std::thread::sleep(Duration::from_millis(1200));
                 if flag.load(Ordering::SeqCst) { break; }
-                let current = scan(&folder);
+                let current = scan(&folder, next.2);
                 for (path, sig) in &current {
                     let settled = SystemTime::now().duration_since(sig.1)
                         .map(|age| age >= Duration::from_secs(8)).unwrap_or(false);
@@ -90,13 +94,16 @@ mod tests {
     use super::*;
     #[test]
     fn ignores_transient_and_empty_files() {
-        assert!(!eligible(Path::new("build.apk.part"), 512));
-        assert!(!eligible(Path::new("private.txt"), 512));
-        assert!(!eligible(Path::new("build.zip"), 512));
-        assert!(eligible(Path::new("BUILD.APK"), 512));
-        assert!(!eligible(Path::new("build.apk.tmp"), 512));
-        assert!(!eligible(Path::new(".hidden.apk"), 512));
-        assert!(!eligible(Path::new("build.apk"), 0));
-        assert!(eligible(Path::new("build.apk"), 1024));
+        assert!(!eligible(Path::new("build.apk.part"), 512, false));
+        assert!(!eligible(Path::new("private.txt"), 512, false));
+        assert!(!eligible(Path::new("build.zip"), 512, false));
+        assert!(eligible(Path::new("BUILD.APK"), 512, false));
+        assert!(eligible(Path::new("photo.jpg"), 512, true));
+        assert!(!eligible(Path::new("photo.jpg"), 512, false));
+        assert!(!eligible(Path::new("secret.part"), 512, true));
+        assert!(!eligible(Path::new("build.apk.tmp"), 512, false));
+        assert!(!eligible(Path::new(".hidden.apk"), 512, false));
+        assert!(!eligible(Path::new("build.apk"), 0, false));
+        assert!(eligible(Path::new("build.apk"), 1024, false));
     }
 }
