@@ -39,13 +39,16 @@ struct Settings {
     receive_folder: String,
     #[serde(default)]
     auto_receive: bool,
+    // Session-only: never written to settings.json. Paste once after starting Windows.
+    #[serde(skip)]
+    backup_key: String,
 }
 
 fn default_auto_send() -> bool { true }
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { address: String::new(), token: String::new(), recipient_id: String::new(), auto_send: true, watch_folder: String::new(), watch_enabled: false, watch_all_files: false, receive_folder: String::new(), auto_receive: false }
+        Self { address: String::new(), token: String::new(), recipient_id: String::new(), auto_send: true, watch_folder: String::new(), watch_enabled: false, watch_all_files: false, receive_folder: String::new(), auto_receive: false, backup_key: String::new() }
     }
 }
 
@@ -393,6 +396,7 @@ impl SynchroApp {
             watch_all_files: self.settings.watch_all_files,
             receive_folder: self.settings.receive_folder.clone(),
             auto_receive: self.settings.auto_receive,
+            backup_key: self.settings.backup_key.clone(),
         };
         let tx = self.tx.clone();
         std::thread::spawn(move || {
@@ -496,6 +500,7 @@ impl SynchroApp {
             watch_all_files: self.settings.watch_all_files,
             receive_folder: self.settings.receive_folder.clone(),
             auto_receive: self.settings.auto_receive,
+            backup_key: self.settings.backup_key.clone(),
         };
         let tx = self.tx.clone();
         std::thread::spawn(move || {

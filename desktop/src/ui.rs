@@ -446,7 +446,7 @@ fn settings_page(ui: &mut egui::Ui, app: &mut SynchroApp) {
     card(ui, |ui| {
         title(ui, "Резервні копії з Android → ПК", 18.0);
         caption(ui, "Завантаження з HTTPS Relay на цей комп'ютер. Файли перевіряються SHA-256.");
-        caption(ui, "Оригінали не видаляються. Шифровані E2EE файли залишаються у вхідних.");
+        caption(ui, "Оригінали не видаляються. SYNBKP01 E2EE-файли розшифровуються лише на ПК.");
         ui.add_space(8.0);
         ui.horizontal(|ui| {
             ui.add(egui::TextEdit::singleline(&mut app.settings.receive_folder)
@@ -454,6 +454,30 @@ fn settings_page(ui: &mut egui::Ui, app: &mut SynchroApp) {
                 .desired_width((ui.available_width()-165.0).max(140.0)));
             if ui.small_button("Вибрати папку").clicked() { app.choose_receive_folder(); }
         });
+        ui.add_space(9.0);
+        ds::eyebrow(ui, "КЛЮЧ РЕЗЕРВНИХ КОПІЙ · ЛИШЕ У ПАМ'ЯТІ");
+        ui.add(egui::TextEdit::singleline(&mut app.settings.backup_key)
+            .password(true)
+            .hint_text("64 hex-символи · не зберігається на диску")
+            .desired_width((ui.available_width()-10.0).max(150.0)));
+        ui.horizontal(|ui| {
+            if ui.small_button("Створити новий ключ").clicked() {
+                app.settings.backup_key = crate::backup_crypto::generate_key();
+                ui.ctx().copy_text(app.settings.backup_key.clone());
+                app.status = "Новий ключ скопійовано. Збережи його в менеджері паролів і встав на Android.".into();
+            }
+            if ui.small_button("Копіювати ключ").clicked() {
+                if crate::backup_crypto::valid_key(&app.settings.backup_key) {
+                    ui.ctx().copy_text(app.settings.backup_key.clone());
+                }
+            }
+            if crate::backup_crypto::valid_key(&app.settings.backup_key) {
+                ui.label(RichText::new("● E2EE ключ введено").color(GREEN));
+            } else {
+                caption(ui, "E2EE очікує ключ");
+            }
+        });
+        caption(ui, "Збережи ключ окремо: якщо втратити його, резервні копії не відновляться.");
         ui.checkbox(&mut app.settings.auto_receive,
             "Автоматично перевіряти вхідні кожні 60 секунд (поки Synchro відкритий)");
         ui.horizontal(|ui| {
@@ -462,13 +486,13 @@ fn settings_page(ui: &mut egui::Ui, app: &mut SynchroApp) {
             ).clicked() { app.receive_inbox(); }
             if ui.small_button("Зберегти").clicked() { app.persist_settings(); }
         });
-        caption(ui, "Працює лише з HTTPS Internet Mode. Зашифровані файли вимагають майбутнього E2EE-клієнта Windows.");
+        caption(ui, "Працює через HTTPS. Підтримує Synchro Backup E2EE SYNBKP01; браузерні SYNCHRO1 поки не розшифровує.");
     });
     ui.add_space(12.0);
     card(ui, |ui| {
         title(ui, "Безпека", 18.0);
         caption(ui, "Код сполучення зберігається локально у профілі Windows.");
-        caption(ui, "LAN: HTTP. Internet: HTTPS із перевіркою SHA-256. Windows E2EE ще в розробці.");
+        caption(ui, "LAN: HTTP. Internet: HTTPS. Android Backup → ПК: AES-256-GCM E2EE; ручний Windows→Android ще не E2EE.");
         caption(ui, "Не передавай секретний код іншим людям.");
     });
 }

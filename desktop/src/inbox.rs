@@ -1,10 +1,10 @@
-//! Receiver for unencrypted Synchro Internet Relay files.
-//! Files are written to an explicitly selected Windows directory, validated
-//! with SHA-256, atomically published, and only then ACKed to the relay.
-//! E2EE transfers are left untouched: native Windows decrypt is not available.
-use crate::{Settings, MAX_SIZE};
+//! Verified Relay inbox. SYNBKP01 backups are authenticated and decrypted locally.
+//! Ciphertext hash is checked, plaintext is persisted without overwrite, and
+//! sender is ACKed only once a verified copy is safely stored on this PC.
+//! Other E2EE formats (including browser SYNCHRO1) are NOT supported.
+use crate::{Settings, MAX_SIZE, backup_crypto};
 use reqwest::blocking::{Client, Response};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{fs::{self, File, OpenOptions}, io::{Read, Write},
           path::{Path, PathBuf}, time::Duration};
@@ -52,6 +52,44 @@ fn verified(path: &Path, expected: &str, expected_size: u64) -> bool {
     format!("{:x}", digest.finalize()).eq_ignore_ascii_case(expected)
 }
 
+#[derive(Deserialize, Serialize)]
+struct BackupReceipt {
+    filename: String,
+    ciphertext_sha256: String,
+    plaintext_sha256: String,
+    plaintext_size: u64,
+}
+fn receipt_path(dir: &Path, id: &str) -> PathBuf {
+    dir.join(format!(".synchro-{id}.receipt.json"))
+}
+fn check_receipt(dir: &Path, item: &Inbound) -> Option<bool> {
+    let bytes=fs::read(receipt_path(dir,&item.id)).ok()?;
+    let receipt: BackupReceipt=serde_json::from_slice(&bytes).ok()?;
+    if !receipt.ciphertext_sha256.eq_ignore_ascii_case(&item.sha256) {
+        return Some(false);
+    }
+    let target=dir.join(&receipt.filename);
+    Some(verified(&target, &receipt.plaintext_sha256, receipt.plaintext_size))
+}
+fn save_receipt(dir: &Path, item: &Inbound, filename: &str,
+                decrypted: &backup_crypto::DecryptResult) -> Result<(), String> {
+    let receipt=BackupReceipt {
+        filename:filename.to_owned(),ciphertext_sha256:item.sha256.clone(),
+        plaintext_sha256:decrypted.plaintext_sha256.clone(),
+        plaintext_size:decrypted.plain_size
+    };
+    let path=receipt_path(dir,&item.id);
+    let bytes=serde_json::to_vec(&receipt).map_err(|e|e.to_string())?;
+    if path.exists() {
+        return if check_receipt(dir,item)==Some(true) {Ok(())}
+               else {Err("Conflicting backup receipt on disk".into())};
+    }
+    let mut file=OpenOptions::new().create_new(true).write(true)
+        .open(&path).map_err(|e|e.to_string())?;
+    file.write_all(&bytes).map_err(|e|e.to_string())?;
+    file.sync_all().map_err(|e|e.to_string())?;
+    Ok(())
+}
 fn checked_response(response: Response) -> Result<Response,String> {
     if !response.status().is_success() {
         let code=response.status();
@@ -71,7 +109,8 @@ fn ack(client: &Client, base: &str, token: &str, item: &Inbound) -> Result<(),St
     Err(format!("ACK HTTP {}",response.status()))
 }
 
-fn receive_one(client: &Client, base: &str, token: &str, dir: &Path, item: &Inbound)
+fn receive_one(client: &Client, base: &str, token: &str, dir: &Path,
+               item: &Inbound, backup_key: &str)
     -> Result<bool,String>
 {
     if item.id.len()!=36 || !item.id.bytes().all(|b|b.is_ascii_hexdigit()||b==b'-') {
@@ -80,6 +119,48 @@ fn receive_one(client: &Client, base: &str, token: &str, dir: &Path, item: &Inbo
     if item.size_bytes==0 || item.size_bytes>MAX_SIZE
         || item.sha256.len()!=64 || !item.sha256.bytes().all(|b|b.is_ascii_hexdigit()) {
         return Err("Invalid transfer metadata".into());
+    }
+    if item.encrypted {
+        if !backup_crypto::valid_key(backup_key) {
+            return Err("E2EE ключ Windows не введено — зашифровану копію залишено на Relay".into());
+        }
+        if check_receipt(dir,item)==Some(true) {
+            ack(client,base,token,item)?;
+            return Ok(false);
+        }
+        let filename=format!("{}-{}", &item.id[..8], safe_name(&item.filename));
+        let target=dir.join(&filename);
+        let nonce=rand::random::<u64>();
+        let temporary=dir.join(format!(".synchro-{}-{nonce:016x}.part",item.id));
+        let result=(|| -> Result<bool,String> {
+            let mut output=OpenOptions::new().write(true).create_new(true)
+                .open(&temporary).map_err(|e|e.to_string())?;
+            let response=checked_response(client.get(
+                format!("{base}/api/v1/transfers/{}/download",item.id))
+                .bearer_auth(token).send().map_err(|e|e.to_string())?)?;
+            let decrypted=backup_crypto::decrypt_stream(response,&mut output,item.size_bytes,backup_key)?;
+            if !decrypted.ciphertext_sha256.eq_ignore_ascii_case(&item.sha256) {
+                return Err("Encrypted download SHA-256 mismatch".into());
+            }
+            output.sync_all().map_err(|e|e.to_string())?;
+            drop(output);
+            let created=if target.exists() {
+                if !verified(&target,&decrypted.plaintext_sha256,decrypted.plain_size) {
+                    return Err("Existing target differs — refusing to overwrite".into());
+                }
+                false
+            } else {
+                // Hard link is exclusive and avoids rename-overwrite race.
+                fs::hard_link(&temporary,&target).map_err(|e|e.to_string())?;
+                true
+            };
+            save_receipt(dir,item,&filename,&decrypted)?;
+            Ok(created)
+        })();
+        let _=fs::remove_file(&temporary);
+        let created=result?;
+        ack(client,base,token,item)?;
+        return Ok(created);
     }
     let filename=safe_name(&item.filename);
     let mut target=dir.join(&filename);
@@ -148,16 +229,20 @@ pub(super) fn receive(settings: &Settings) -> Result<String,String> {
         .json::<Vec<Inbound>>().map_err(|e|e.to_string())?;
     let mut downloaded=0usize;
     let mut already=0usize;
-    let mut encrypted=0usize;
+    let mut skipped=0usize;
+    let mut first_issue=String::new();
     for item in inbox {
         if item.status!="ready" { continue; }
-        if item.encrypted {
-            encrypted+=1;
-            continue;
+        match receive_one(&client,&base,token,&folder,&item,&settings.backup_key) {
+            Ok(true) => downloaded+=1,
+            Ok(false) => already+=1,
+            Err(e) => {
+                skipped+=1;
+                if first_issue.is_empty() { first_issue=e; }
+            }
         }
-        if receive_one(&client,&base,token,&folder,&item)? { downloaded+=1; } else { already+=1; }
     }
-    Ok(format!("ПК: нових {downloaded}, вже збережено {already}, E2EE пропущено {encrypted}"))
+    Ok(format!("ПК: нових {downloaded}, вже збережено {already}, не оброблено {skipped}. {first_issue}"))
 }
 
 #[cfg(test)]
