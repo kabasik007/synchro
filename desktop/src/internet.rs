@@ -93,7 +93,7 @@ pub(super) fn probe(settings: &Settings) -> Result<DeviceInfo, String> {
     }
     Ok(DeviceInfo {
         device: format!("Synchro Internet · {}",self_device.name),
-        app_version: "0.5.1".into(), sdk: 0,
+        app_version: "0.6.0".into(), sdk: 0,
     })
 }
 

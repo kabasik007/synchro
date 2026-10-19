@@ -16,6 +16,8 @@ disaster-recovery-tested production archive.
   Each record = AES-256-GCM(key, nonce=prefix || record_index_u32_BE,
   plaintext, AAD=40-byte_header || record_index_u32_BE).
   Every record is independently authenticated; no full-video RAM buffer.
+- Individual unreadable Android files no longer block other photos in the
+  same folder; failures are reported, and WorkManager retries.
 - Android Keystore encrypts the shared 32-byte backup key at rest on Android;
   Windows keeps the 64-hex backup key in memory for the current session only.
   Create and save the key on Windows, then paste into Android.

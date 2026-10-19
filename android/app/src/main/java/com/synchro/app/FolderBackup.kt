@@ -280,6 +280,8 @@ class FolderBackupWorker(ctx: Context, params: WorkerParameters): Worker(ctx, pa
             require(token.matches(Regex("[0-9a-fA-F]{64}")) &&
                 recipient.matches(Regex("[0-9a-fA-F-]{36}"))) { "Check Android token and Windows UUID" }
             val master = BackupCrypto.loadMaster(applicationContext)
+            var failedFiles = 0
+            var firstFileError = ""
             try {
             val grants = applicationContext.contentResolver.persistedUriPermissions
                 .filter { it.isReadPermission }.map { it.uri.toString() }.toSet()
@@ -301,14 +303,31 @@ class FolderBackupWorker(ctx: Context, params: WorkerParameters): Worker(ctx, pa
                     val name = doc.name.orEmpty()
                     if (name.startsWith(".") || name.endsWith(".tmp") ||
                         name.endsWith(".part")) continue
-                    upload(base, token, recipient, dir, doc, master)
+                    try {
+                        upload(base, token, recipient, dir, doc, master)
+                    } catch (e: Exception) {
+                        // One unreadable photo must not indefinitely starve every
+                        // later file in a large selected folder.
+                        if (isStopped) return Result.retry()
+                        failedFiles++
+                        if (firstFileError.isEmpty()) {
+                            firstFileError = (doc.name ?: "Файл") + ": " + (e.message ?: "помилка")
+                        }
+                    }
                 }
                 prefs.edit().putInt(cursorKey, (start + batchSize) % files.size).apply()
             }
             } finally { master.fill(0) }
-            prefs.edit().putString("last_result", "Перевірено " + System.currentTimeMillis())
-                .remove("last_error").apply()
-            Result.success()
+            prefs.edit().putString("last_result", "Перевірено " + System.currentTimeMillis() +
+                "; файлів із помилкою: " + failedFiles)
+                .apply()
+            if (failedFiles > 0) {
+                prefs.edit().putString("last_error", firstFileError).apply()
+                Result.retry()
+            } else {
+                prefs.edit().remove("last_error").apply()
+                Result.success()
+            }
         } catch (e: Exception) {
             prefs.edit().putString("last_error", e.message ?: "Помилка копіювання").apply()
             Result.retry()

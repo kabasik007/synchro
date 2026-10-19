@@ -55,8 +55,10 @@ object BackupCrypto {
         cipher.init(Cipher.ENCRYPT_MODE, wrapKey())
         val sealed = cipher.doFinal(hex.lowercase().toByteArray(Charsets.US_ASCII))
         val combined = cipher.iv + sealed
-        context.getSharedPreferences(PREF, Context.MODE_PRIVATE).edit()
-            .putString("wrapped", Base64.encodeToString(combined, Base64.NO_WRAP)).commit()
+        require(context.getSharedPreferences(PREF, Context.MODE_PRIVATE).edit()
+            .putString("wrapped", Base64.encodeToString(combined, Base64.NO_WRAP)).commit()) {
+            "Не вдалося зберегти ключ у Android Keystore"
+        }
     }
 
     fun hasMaster(context: Context): Boolean = context
