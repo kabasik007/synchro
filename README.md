@@ -22,6 +22,26 @@ Synchro is an experimental open-source PC-to-phone file transfer utility. The Wi
 
 > The picture is a design target (mockup), not a screenshot of currently implemented features. Only show live connection status, transfer progress and device details after verifying real data.
 
+## Synchro v0.4 — Internet Mode (server + web MVP)
+
+**[Deployment guide: disk.sitezilla.net and aaPanel](docs/INTERNET-MODE-0.4.md)**
+
+A new self-hosted Rust Axum + SQLite relay is available in the **server/** directory and a responsive browser client lives in **web/**. The design follows the existing [approved mockup](docs/design/README.md).
+
+- Windows/Android **browser-to-browser** transfers over HTTPS from different networks; the receiver can be offline when a file is uploaded.
+- Administrator-issued 256-bit per-device tokens, token revocation, sender outbox, receiver inbox, WebSocket live notifications.
+- Uploads in 8 MiB chunks, SHA-256 end-to-end integrity checking (not end-to-end encryption), explicit delivery acknowledgement, quota and expiration.
+- For aaPanel, the static site lives in /www/wwwroot/disk.sitezilla.net while private database, secrets and files remain under /var/lib/synchro.
+- **This is source code only.** The Rust relay is not yet built or deployed on your server. Native Windows/Android apps still use their existing local/Tailscale transport. Bunny S3 and client-side E2EE are later milestones.
+
+Run the following on a machine with a Rust toolchain to check the server:
+
+    cd server
+    cargo test
+    cargo build --release
+
+Do not expose port 8787 publicly; Nginx should proxy requests from HTTPS to the loopback-only Rust process. Never commit a real administrator token.
+
 ## v0.3.1 Stability Update
 
 The fixes from the [v0.3 bug audit](docs/AUDIT-0.3-2026-10-19.md) have been implemented in source. **[Read the v0.3.1 fix list and regression tests](docs/RELEASE-0.3.1.md).** These changes have not yet been compiled and validated on your local Windows/Android devices.
