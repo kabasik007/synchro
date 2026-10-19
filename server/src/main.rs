@@ -3,6 +3,7 @@
 mod api;
 mod websocket;
 mod setup;
+mod backup;
 
 use axum::{
     http::{header, HeaderMap, StatusCode},
@@ -312,6 +313,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         tokio::fs::create_dir_all(parent).await?;
     }
     let db = init_db(&db_path)?;
+    let backup_dir = PathBuf::from(env::var("SYNCHRO_BACKUP_DIR").unwrap_or_else(|_| {
+        db_path.parent().unwrap_or(Path::new("/var/lib/synchro"))
+            .join("backups").to_string_lossy().to_string()
+    }));
+    if !backup_dir.is_absolute() {
+        return Err("SYNCHRO_BACKUP_DIR must be an absolute private directory".into());
+    }
     let (notifications, _) = broadcast::channel::<Signal>(256);
     let state = State {
         db: Arc::new(Mutex::new(db)),
@@ -330,6 +338,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             if let Err(err) = prune_expired(&cleaning).await {
                 error!("prune failed: {}", err.1);
             }
+        }
+    });
+    // Back up online before serving clients and once every 24h afterwards.
+    // Errors are logged without stopping transfers. Keep snapshots off-site too.
+    let backup_state = state.clone();
+    tokio::spawn(async move {
+        loop {
+            if let Err(err) = backup::snapshot(backup_state.clone(), backup_dir.clone()).await {
+                error!("SQLite backup failed: {err}");
+            }
+            tokio::time::sleep(Duration::from_secs(24 * 3600)).await;
         }
     });
     let app = Router::new()
