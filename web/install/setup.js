@@ -103,6 +103,7 @@ async function inspect() {
   paint('sqliteState',info.database_ready?'Готова · '+info.device_count+' пристроїв':'Помилка',info.database_ready);
   paint('storageState',info.storage_writable?'Можна записувати':'Недоступне',info.storage_writable);
   $('quota').textContent=(info.quota_bytes/1073741824).toFixed(1)+' ГіБ (логічний ліміт)';
+  $('freeDisk').textContent=(info.free_bytes/1073741824).toFixed(1)+' ГіБ';
   $('ttl').textContent=info.ttl_hours+' год';
   if(info.installed){lock();return}
   if(!info.database_ready||!info.storage_writable) {
