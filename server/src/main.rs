@@ -200,6 +200,20 @@ fn init_db(path: &Path) -> Result<Connection, Box<dyn std::error::Error>> {
              value TEXT NOT NULL
          );"
     )?;
+    // Additive migration: v0.4.0 device tables may lack the revoked column.
+    // CREATE TABLE IF NOT EXISTS does NOT migrate existing SQLite tables.
+    let has_revoked = {
+        let mut statement = db.prepare("PRAGMA table_info(devices)")?;
+        let names = statement.query_map([], |row| row.get::<_, String>(1))?;
+        names.filter_map(Result::ok).any(|name| name == "revoked")
+    };
+    if !has_revoked {
+        db.execute_batch(
+            "ALTER TABLE devices ADD COLUMN revoked INTEGER NOT NULL DEFAULT 0;"
+        )?;
+    }
+    db.execute_batch("PRAGMA user_version=2;")?;
+
     // An interrupted finalization should be retried rather than stuck forever.
     db.execute(
         "UPDATE transfers SET status = 'uploading' WHERE status = 'finalizing'",
