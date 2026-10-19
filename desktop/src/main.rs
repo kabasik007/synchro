@@ -397,9 +397,10 @@ impl SynchroApp {
 
     fn start(&mut self) {
         if self.busy || self.files.is_empty() { return; }
-        if let Err(e) = if self.settings.address.trim().starts_with("https://") {
+        let destination = if self.settings.address.trim().starts_with("https://") {
             internet::origin(&self.settings.address)
-        } else { target_url(&self.settings.address) } {
+        } else { target_url(&self.settings.address) };
+        if let Err(e) = destination {
             self.status = e;
             return;
         }

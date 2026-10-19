@@ -112,13 +112,14 @@ object InternetRelay {
             try {
                 check(download)
                 val resolver = context.contentResolver
-                local = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+                val destination = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI,
                     ContentValues().apply {
                         put(MediaStore.MediaColumns.DISPLAY_NAME, name)
                         put(MediaStore.MediaColumns.MIME_TYPE, "application/octet-stream")
                         put(MediaStore.MediaColumns.RELATIVE_PATH, SynchroConfig.FOLDER)
                         put(MediaStore.MediaColumns.IS_PENDING, 1)
                     }) ?: error("MediaStore unavailable")
+                local = destination
                 val digest = MessageDigest.getInstance("SHA-256")
                 var count = 0L
                 if (encrypted) {
@@ -138,10 +139,10 @@ object InternetRelay {
                         "SHA-256 ciphertext mismatch"
                     }
                     val cleartext = decrypt(data.toByteArray(), e2eeKey)
-                    resolver.openOutputStream(local, "w")?.use { it.write(cleartext) }
+                    resolver.openOutputStream(destination, "w")?.use { it.write(cleartext) }
                         ?: error("Cannot write Downloads file")
                 } else {
-                    resolver.openOutputStream(local, "w")?.use { output ->
+                    resolver.openOutputStream(destination, "w")?.use { output ->
                         download.inputStream.use { input ->
                             val buf = ByteArray(65536)
                             while (true) {
@@ -159,7 +160,7 @@ object InternetRelay {
                         "SHA-256 mismatch"
                     }
                 }
-                require(resolver.update(local, ContentValues().apply {
+                require(resolver.update(destination, ContentValues().apply {
                     put(MediaStore.MediaColumns.IS_PENDING, 0)
                 }, null, null) == 1) { "Failed to publish download" }
                 receipts.edit().putString(id, expected).apply()

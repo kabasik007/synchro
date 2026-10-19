@@ -38,7 +38,8 @@ async function connect() {
 }
 function disconnect() {
  verifiedDownloads.clear();
- pendingUpload=null;deviceToken='';me=null;file=null;$('deviceToken').value='';$('recipient').replaceChildren(new Option('Не підключено',''));
+ pendingUpload=null;$('e2eeKey').value='';$('e2eeKeyBox').classList.add('hidden');
+  deviceToken='';me=null;file=null;$('deviceToken').value='';$('recipient').replaceChildren(new Option('Не підключено',''));
  $('deviceList').textContent='Підключення відсутнє.';$('inbox').textContent='Підключення відсутнє.';
  $('connection').textContent='● Не підключено';$('send').disabled=true;
  if(ws){ws.close();ws=null}setStatus('loginMessage','Сеанс завершено.');
@@ -55,7 +56,7 @@ async function loadDevices() {
  }
 }
 function selectFile(candidate) {
- if(file!==candidate) pendingUpload=null;
+ if(file!==candidate){pendingUpload=null;$('e2eeKey').value='';$('e2eeKeyBox').classList.add('hidden');}
  file=candidate||null;$('send').disabled=!file || !me || uploading;
  if(!file){setStatus('selectedFile','');return}
  setStatus('selectedFile',file.name+' · '+size(file.size)+(file.size>MAX_WEB_SIZE?' · Занадто великий для вебклієнта':''));
@@ -257,7 +258,7 @@ $('adminOrigin').value=location.protocol==='https:'?location.origin:'';
 $('choose').addEventListener('click',()=>$('uploadInput').click());
 $('uploadInput').addEventListener('change',e=>selectFile(e.target.files?.[0]));
 $('send').addEventListener('click',send);
-$('encrypt').addEventListener('change',()=>{pendingUpload=null;});
+$('encrypt').addEventListener('change',()=>{pendingUpload=null;$('e2eeKey').value='';$('e2eeKeyBox').classList.add('hidden');});
 $('copyE2EEKey').addEventListener('click',()=>navigator.clipboard.writeText($('e2eeKey').value).catch(()=>{}));
 const drop=$('drop');
 drop.addEventListener('dragover',e=>{e.preventDefault();drop.classList.add('drag')});

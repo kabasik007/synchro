@@ -236,7 +236,7 @@ class MainActivity : Activity() {
                 it.textSize = 14f
                 it.setSingleLine(true)
                 it.inputType = InputType.TYPE_CLASS_TEXT or
-                    if (password) InputType.TYPE_TEXT_VARIATION_PASSWORD else InputType.TYPE_TEXT_VARIATION_NORMAL
+                    (if (password) InputType.TYPE_TEXT_VARIATION_PASSWORD else InputType.TYPE_TEXT_VARIATION_NORMAL)
                 card.addView(it, LinearLayout.LayoutParams(-1, -2))
             }
         val server = field("https://disk.sitezilla.net", prefs.getString("server", "") ?: "")
