@@ -372,6 +372,58 @@ mod tests {
         assert!(safe_id("../../etc/passwd").is_err());
     }
 
+    #[tokio::test]
+    async fn prune_respects_delivery_grace_and_mutation_lock() {
+        let root = std::env::temp_dir().join(format!("synchro-security-{}", uuid::Uuid::new_v4()));
+        let storage = root.join("files");
+        tokio::fs::create_dir_all(storage.join("objects")).await.unwrap();
+        tokio::fs::create_dir_all(storage.join("chunks")).await.unwrap();
+        let db = init_db(&root.join("test.sqlite3")).unwrap();
+        let sender = uuid::Uuid::new_v4().to_string();
+        let recipient = uuid::Uuid::new_v4().to_string();
+        let transfer = uuid::Uuid::new_v4().to_string();
+        db.execute("INSERT INTO devices(id,name,token_sha256,created_at)
+                    VALUES(?1,'Windows',?2,?3)", params![sender, "a".repeat(64), now()]).unwrap();
+        db.execute("INSERT INTO devices(id,name,token_sha256,created_at)
+                    VALUES(?1,'Android',?2,?3)", params![recipient, "b".repeat(64), now()]).unwrap();
+        db.execute("INSERT INTO transfers(id,sender_id,recipient_id,filename,
+                    size_bytes,sha256,status,created_at,expires_at,delivered_at)
+                    VALUES(?1,?2,?3,'ok.apk',3,?4,'delivered',?5,?6,?7)",
+            params![transfer, sender, recipient, "c".repeat(64), now(),
+                    now() + 7200, now()]).unwrap();
+        let blob = storage.join("objects").join(format!("{transfer}.blob"));
+        tokio::fs::write(&blob, b"apk").await.unwrap();
+        let (notifications, _) = broadcast::channel(16);
+        let state = State {
+            db: Arc::new(Mutex::new(db)),
+            config: Arc::new(Config { storage, admin_token: String::new(),
+                storage_quota: 5 * 1024 * 1024 * 1024, ttl_hours: 72 }),
+            notifications,
+            chunk_slots: Arc::new(Semaphore::new(3)),
+            mutation_lock: Arc::new(AsyncMutex::new(())),
+            ws_slots: Arc::new(Semaphore::new(32)),
+            download_slots: Arc::new(Semaphore::new(4)),
+        };
+        let guard = state.mutation_lock.lock().await;
+        let cloned = state.clone();
+        let task = tokio::spawn(async move { prune_expired(&cloned).await });
+        tokio::time::sleep(Duration::from_millis(40)).await;
+        assert!(!task.is_finished(), "cleanup must wait for an in-flight file mutation");
+        drop(guard);
+        assert_eq!(task.await.unwrap().unwrap(), 0, "ACK must retain copy during grace");
+        assert!(blob.exists());
+
+        {
+            let db = state.db.lock().unwrap();
+            db.execute("UPDATE transfers SET delivered_at=?1 WHERE id=?2",
+                params![now()-4000, transfer]).unwrap();
+        }
+        assert_eq!(prune_expired(&state).await.unwrap(), 1);
+        assert!(!blob.exists());
+        drop(state);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
     #[test]
     fn tokens_are_random_and_hasher_is_stable() {
         let a = new_token();
