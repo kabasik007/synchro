@@ -1,4 +1,4 @@
-# Synchro v0.4.1 — aaPanel + Nginx + Browser Install Wizard
+# Synchro v0.4.2 — aaPanel + Nginx + Browser Install Wizard
 
 ## Goal
 
@@ -56,19 +56,27 @@ The script:
 - creates **private** /var/lib/synchro and /etc/synchro paths;
 - generates an initial cryptographically random administrator secret if no private .env exists, **without printing the key**;
 - installs and starts a hardened systemd service;
-- copies only web/ assets to the aaPanel site root;
+- stages six reviewed static assets and an unprivileged publisher in root-owned /opt/synchro/staged-web (does **not** write directly into aaPanel webroot);
 - **does not modify Nginx**, alter TLS, touch other site configs or expose TCP port 8787.
+
+**Publish web files in a separate unprivileged step** after running bootstrap (adjust `www` if your aaPanel site uses a different owner):
+
+    sudo -u www bash /opt/synchro/staged-web/deploy/publish-web.sh disk.sitezilla.net
+
+If aaPanel created a generic placeholder `index.html`, inspect and remove/rename it through aaPanel File Manager *only for this newly created Synchro website*. The publisher refuses to overwrite an unrelated site. It also refuses to run as root or to follow symlinks. Do not use `sudo cp -r web/ /www/wwwroot/...`.
 
 Check the local API:
 
     sudo systemctl status synchro-server --no-pager
     curl -fsS http://127.0.0.1:8787/health
 
-Expected JSON: {"status":"ok","version":"0.4.1"}.
+Expected JSON: {"status":"ok","version":"0.4.2"}.
 
 ## 4. Add the aaPanel Nginx reverse proxy
 
-Open your exact HTTPS site config in aaPanel. Merge the directives in:
+**First** add `deploy/nginx-http-limits.conf` **once** inside the top-level Nginx `http {}` context (not inside a website). It declares required request/connection limit zones. Behind Cloudflare, configure trusted real client IPs in aaPanel/Nginx rather than trusting arbitrary forwarded headers.
+
+**Then** open the specific Synchro HTTPS site configuration in aaPanel. Merge directives in:
 
 **deploy/nginx-synchro.conf**
 
@@ -78,12 +86,11 @@ This routes /api/v1/ and /ws to 127.0.0.1:8787; static /install/ and other web a
 
 Test:
 
-    sudo nginx -t
-    sudo systemctl reload nginx
+    sudo nginx -t && sudo systemctl reload nginx
 
 If nginx -t fails, **do not reload**; correct the conflict first. Your aaPanel may use an Nginx binary at /www/server/nginx/sbin/nginx instead of the PATH nginx executable; prefer the actual installed binary.
 
-Now open https://disk.sitezilla.net/install/ (replace with the domain you chose).
+Now open https://disk.sitezilla.net/install/ (replace with the domain you chose). Do not remove any existing database when upgrading from 0.4.1.
 
 ## 5. Use the browser installer
 
