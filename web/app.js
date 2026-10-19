@@ -135,7 +135,7 @@ async function downloadFile(item) {
 }
 async function acknowledge(item) {
  if(!verifiedDownloads.has(item.id)) return setStatus('inboxMessage','Спочатку завантаж файл і перевір SHA-256.','error');
- if(!confirm('Підтвердити, що файл збережено на пристрої? Після цього його буде видалено із серверного сховища.'))return;
+ if(!confirm('Підтвердити, що файл збережено на пристрої? Сервер зберігатиме резервну копію до години для відновлення.'))return;
  try {
   await api('/api/v1/transfers/'+encodeURIComponent(item.id)+'/ack',{method:'POST',json:{sha256:item.sha256}});
   verifiedDownloads.delete(item.id);
