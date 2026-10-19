@@ -248,7 +248,8 @@ pub(crate) async fn prune_expired(state: &State) -> Result<usize, ApiError> {
         ).map_err(|_| ApiError::internal())?;
         let rows = statement.query_map(params![now(), now() - 3600], |row| row.get::<_, String>(0))
             .map_err(|_| ApiError::internal())?;
-        rows.filter_map(Result::ok).collect()
+        let expired = rows.collect::<Result<Vec<_>, _>>().map_err(|_| ApiError::internal())?;
+        expired
     };
     let mut deleted = 0;
     'items: for id in expired {
