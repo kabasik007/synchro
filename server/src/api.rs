@@ -109,6 +109,8 @@ pub(crate) struct NewTransfer {
     filename: String,
     size_bytes: i64,
     sha256: String,
+    #[serde(default)]
+    encrypted: bool,
 }
 
 #[derive(Clone, Serialize)]
@@ -119,6 +121,7 @@ pub(crate) struct TransferInfo {
     filename: String,
     size_bytes: i64,
     sha256: String,
+    encrypted: bool,
     status: String,
     created_at: i64,
     expires_at: i64,
@@ -134,13 +137,13 @@ pub(crate) struct InitResponse {
 fn find_transfer(state: &State, transfer_id: &str) -> Result<TransferInfo, ApiError> {
     let db = state.db.lock().map_err(|_| ApiError::internal())?;
     db.query_row(
-        "SELECT id,sender_id,recipient_id,filename,size_bytes,sha256,status,created_at,expires_at
+        "SELECT id,sender_id,recipient_id,filename,size_bytes,sha256,status,created_at,expires_at,encrypted
          FROM transfers WHERE id=?1",
         [transfer_id],
         |r| Ok(TransferInfo {
             id: r.get(0)?, sender_id: r.get(1)?, recipient_id: r.get(2)?,
             filename: r.get(3)?, size_bytes: r.get(4)?, sha256: r.get(5)?,
-            status: r.get(6)?, created_at: r.get(7)?, expires_at: r.get(8)?,
+            status: r.get(6)?, created_at: r.get(7)?, expires_at: r.get(8)?, encrypted: r.get::<_, i64>(9)? != 0,
         }),
     ).optional().map_err(|_| ApiError::internal())?
         .ok_or_else(ApiError::not_found)
@@ -227,10 +230,10 @@ pub(crate) async fn create_transfer(
         if open >= 20 { return Err(ApiError::conflict("Too many pending uploads (limit 20)")); }
         db.execute(
             "INSERT INTO transfers
-             (id,sender_id,recipient_id,filename,size_bytes,sha256,status,created_at,expires_at)
-             VALUES(?1,?2,?3,?4,?5,?6,'uploading',?7,?8)",
+             (id,sender_id,recipient_id,filename,size_bytes,sha256,status,created_at,expires_at,encrypted)
+             VALUES(?1,?2,?3,?4,?5,?6,'uploading',?7,?8,?9)",
             params![id, sender.id, recipient, payload.filename, payload.size_bytes,
-                    digest, created, expires],
+                    digest, created, expires, payload.encrypted as i64],
         ).map_err(|_| ApiError::internal())?;
     }
     Ok((
@@ -241,7 +244,7 @@ pub(crate) async fn create_transfer(
             transfer: TransferInfo {
                 id, sender_id: sender.id, recipient_id: recipient,
                 filename: payload.filename, size_bytes: payload.size_bytes,
-                sha256: digest, status: "uploading".into(),
+                sha256: digest, encrypted: payload.encrypted, status: "uploading".into(),
                 created_at: created, expires_at: expires,
             },
         }),
@@ -479,7 +482,7 @@ pub(crate) async fn inbox(
     let device = verify_device(&headers, &state)?;
     let db = state.db.lock().map_err(|_| ApiError::internal())?;
     let mut statement = db.prepare(
-        "SELECT id,sender_id,recipient_id,filename,size_bytes,sha256,status,created_at,expires_at
+        "SELECT id,sender_id,recipient_id,filename,size_bytes,sha256,status,created_at,expires_at,encrypted
          FROM transfers WHERE recipient_id=?1 AND expires_at>?2
          AND (status='ready' OR (status='delivered' AND delivered_at>?3))
          ORDER BY created_at DESC LIMIT 100",
@@ -487,7 +490,7 @@ pub(crate) async fn inbox(
     let rows = statement.query_map(params![device.id, now(), now()-3600], |r| Ok(TransferInfo {
         id: r.get(0)?, sender_id: r.get(1)?, recipient_id: r.get(2)?,
         filename: r.get(3)?, size_bytes: r.get(4)?, sha256: r.get(5)?,
-        status: r.get(6)?, created_at: r.get(7)?, expires_at: r.get(8)?,
+        status: r.get(6)?, created_at: r.get(7)?, expires_at: r.get(8)?, encrypted: r.get::<_, i64>(9)? != 0,
     })).map_err(|_| ApiError::internal())?;
     let found = rows.collect::<Result<Vec<_>, _>>().map_err(|_| ApiError::internal())?;
     Ok(Json(found))
@@ -516,14 +519,14 @@ pub(crate) async fn outbox(
     let device = verify_device(&headers, &state)?;
     let db = state.db.lock().map_err(|_| ApiError::internal())?;
     let mut statement = db.prepare(
-        "SELECT id,sender_id,recipient_id,filename,size_bytes,sha256,status,created_at,expires_at
+        "SELECT id,sender_id,recipient_id,filename,size_bytes,sha256,status,created_at,expires_at,encrypted
          FROM transfers WHERE sender_id=?1 AND expires_at>?2
          ORDER BY created_at DESC LIMIT 100"
     ).map_err(|_| ApiError::internal())?;
     let rows = statement.query_map(params![device.id, now()], |r| Ok(TransferInfo {
         id: r.get(0)?, sender_id: r.get(1)?, recipient_id: r.get(2)?,
         filename: r.get(3)?, size_bytes: r.get(4)?, sha256: r.get(5)?,
-        status: r.get(6)?, created_at: r.get(7)?, expires_at: r.get(8)?,
+        status: r.get(6)?, created_at: r.get(7)?, expires_at: r.get(8)?, encrypted: r.get::<_, i64>(9)? != 0,
     })).map_err(|_| ApiError::internal())?;
     Ok(Json(rows.collect::<Result<Vec<_>, _>>().map_err(|_| ApiError::internal())?))
 }

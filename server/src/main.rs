@@ -213,7 +213,15 @@ fn init_db(path: &Path) -> Result<Connection, Box<dyn std::error::Error>> {
             "ALTER TABLE devices ADD COLUMN revoked INTEGER NOT NULL DEFAULT 0;"
         )?;
     }
-    db.execute_batch("PRAGMA user_version=2;")?;
+    let has_encrypted = {
+        let mut statement = db.prepare("PRAGMA table_info(transfers)")?;
+        let names = statement.query_map([], |row| row.get::<_, String>(1))?;
+        names.filter_map(Result::ok).any(|name| name == "encrypted")
+    };
+    if !has_encrypted {
+        db.execute_batch("ALTER TABLE transfers ADD COLUMN encrypted INTEGER NOT NULL DEFAULT 0;")?;
+    }
+    db.execute_batch("PRAGMA user_version=3;")?;
 
     // An interrupted finalization should be retried rather than stuck forever.
     db.execute(
@@ -352,7 +360,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
     let app = Router::new()
-        .route("/health", get(|| async { Json(json!({"status":"ok","version":"0.4.2"})) }))
+        .route("/health", get(|| async { Json(json!({"status":"ok","version":"0.5.0"})) }))
         .route("/api/v1/setup/status", get(setup::status))
         .route("/api/v1/setup/check", get(setup::check))
         .route("/api/v1/setup/finish", post(setup::finish))
@@ -427,7 +435,7 @@ mod tests {
         ).unwrap();
         assert_eq!(name, "Old PC");
         let version: i64 = migrated.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(version, 2);
+        assert_eq!(version, 3);
         drop(migrated);
         let _ = std::fs::remove_dir_all(root);
     }
