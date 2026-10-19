@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<meta name="theme-color" content="#080f21">
+<title>Synchro · Installation wizard</title>
+<link rel="stylesheet" href="/install/setup.css">
+<script src="/install/setup.js" defer></script>
+</head>
+<body>
+<div class="stars" aria-hidden="true"></div>
+<div class="layout">
+<aside class="sidebar">
+  <a class="brand" href="/" aria-label="Synchro"><span class="glyph">ϟ</span><span>Synchro<small>SELF-HOSTED DISK</small></span></a>
+  <div class="side-note">SETUP WIZARD <span class="version">0.4.1</span></div>
+  <nav class="steps" aria-label="Кроки налаштування">
+    <div class="step active" data-step="1"><span>01</span><div>Перевірка середовища<small>Rust · Nginx · HTTPS</small></div></div>
+    <div class="step" data-step="2"><span>02</span><div>Сервер та SQLite<small>Сховище · квоти</small></div></div>
+    <div class="step" data-step="3"><span>03</span><div>Підключити пристрої<small>Windows та Android</small></div></div>
+    <div class="step" data-step="4"><span>04</span><div>Завершення<small>Одноразові ключі</small></div></div>
+  </nav>
+  <div class="side-bottom"><span class="dot"></span> Secure self-hosted setup<br><span class="muted">Немає доступу до root із браузера</span></div>
+</aside>
+<main>
+  <header class="bar"><div class="eyebrow"><span class="dot"></span> SYNCHRO CONTROL CENTER</div><a class="back" href="/">← На головну</a></header>
+  <div id="banner" class="banner hidden" role="status"></div>
+  <section id="step1" class="stage">
+    <div class="heroicon">ϟ</div>
+    <div class="eyebrow">STEP 01 / 04</div>
+    <h1>Твій хмарний диск.<br><em>На твоєму сервері.</em></h1>
+    <p class="lead">Майстер налаштування Synchro Internet Mode. Зв'яжемо Windows і Android через HTTPS — без відкритих портів на пристроях.</p>
+    <div class="card">
+      <div class="card-head"><div><h2>Перевірка сервера</h2><p>Нам потрібні aaPanel з HTTPS і запущений Rust Synchro Server.</p></div><span id="healthBadge" class="tag">Перевіряємо…</span></div>
+      <div class="checklist">
+        <div class="checkrow"><span id="httpsSymbol" class="checkicon">○</span><div><strong>HTTPS і домен</strong><small id="httpsDetails">Перевірка URL</small></div></div>
+        <div class="checkrow"><span id="apiSymbol" class="checkicon">○</span><div><strong>Rust API через Nginx</strong><small id="apiDetails">Перевірка /health</small></div></div>
+        <div class="checkrow"><span id="dbSymbol" class="checkicon">○</span><div><strong>Стан інсталяції</strong><small id="dbDetails">SQLite створюється Rust-сервером автоматично</small></div></div>
+      </div>
+      <div class="actions"><button id="recheck">↻ Перевірити знову</button><button id="next1" class="primary" disabled>Продовжити <span>→</span></button></div>
+    </div>
+    <div class="advice"> <span>ⓘ</span><p>Спершу потрібно встановити системну службу один раз: через SSH або консоль aaPanel. Інсталятор не виконує команди з правами root і не змінює Nginx автоматично.</p></div>
+  </section>
+  <section id="step2" class="stage hidden">
+    <div class="eyebrow">STEP 02 / 04</div>
+    <h1>Налаштування <em>сервера</em></h1>
+    <p class="lead">Авторизуйся одноразово секретом адміністратора та перевір, що SQLite й файлове сховище працюють.</p>
+    <div class="card">
+      <div class="field"><label for="adminKey">Секрет адміністратора сервера</label><input id="adminKey" type="password" autocomplete="off" spellcheck="false" placeholder="64 символи з openssl rand -hex 32"><small>Зчитується з приватного /etc/synchro/synchro.env. Не зберігається у браузері чи LocalStorage.</small></div>
+      <div class="field"><label for="domain">Публічна HTTPS-адреса</label><input id="domain" type="url" inputmode="url" spellcheck="false" placeholder="https://disk.sitezilla.net"><small>Домен змінний. Майстер збереже адресу в SQLite, але DNS і SSL налаштовуються в aaPanel/Cloudflare.</small></div>
+      <button id="runChecks" class="primary full">Перевірити права й базу даних →</button>
+      <div class="metrics">
+        <div><span class="muted">SQLite</span><strong id="sqliteState">Очікує перевірки</strong></div>
+        <div><span class="muted">Файлове сховище</span><strong id="storageState">Очікує перевірки</strong></div>
+        <div><span class="muted">Квота сервера</span><strong id="quota">—</strong></div>
+        <div><span class="muted">Зберігання файлів</span><strong id="ttl">—</strong></div>
+      </div>
+      <div class="actions"><button id="back2">← Назад</button><button id="next2" class="primary" disabled>Продовжити <span>→</span></button></div>
+    </div>
+  </section>
+  <section id="step3" class="stage hidden">
+    <div class="eyebrow">STEP 03 / 04</div>
+    <h1>Твої <em>пристрої</em></h1>
+    <p class="lead">Створимо два незалежні токени: один для комп'ютера, інший для телефона. Доступ можна відкликати в майбутньому.</p>
+    <div class="devicegrid">
+      <div class="card device"><div class="deviceicon">▣</div><h2>Windows PC</h2><p>Комп'ютер, що відправляє або приймає файли.</p><label for="windowsName">Назва пристрою</label><input id="windowsName" maxlength="64" value="My Windows PC"></div>
+      <div class="card device"><div class="deviceicon">▯</div><h2>Android</h2><p>Телефон із мобільним інтернетом або Wi-Fi.</p><label for="androidName">Назва пристрою</label><input id="androidName" maxlength="64" value="My Android"></div>
+    </div>
+    <div class="advice warning"><span>⚠</span><p>Після завершення майстер буде заблоковано. Токени відображаються лише один раз. Збережи їх у менеджері паролів.</p></div>
+    <div class="actions"><button id="back3">← Назад</button><button id="finish" class="primary">Створити пристрої та завершити →</button></div>
+  </section>
+  <section id="step4" class="stage hidden">
+    <div class="heroicon done">✓</div>
+    <div class="eyebrow">STEP 04 / 04</div>
+    <h1>Synchro <em>готовий!</em></h1>
+    <p class="lead">Налаштування завершене. Це єдиний момент, коли можна скопіювати створені токени.</p>
+    <div id="credentials" class="tokens"></div>
+    <div class="advice warning"><span>⚠</span><p>Не оновлюй цю сторінку, доки не збережеш обидва токени. Після оновлення їх уже не можна прочитати із сервера — лише видати нові.</p></div>
+    <div class="actions"><a href="/" class="button primary">Відкрити Synchro Disk →</a></div>
+  </section>
+  <section id="locked" class="stage hidden">
+    <div class="heroicon done">✓</div>
+    <div class="eyebrow">SETUP LOCKED</div>
+    <h1>Сервер уже <em>налаштований</em></h1>
+    <p class="lead">Повторна інсталяція з браузера заблокована, щоб ніхто не міг непомітно створити нові ключі доступу.</p>
+    <div class="card"><p>Керуй файлами й пристроями на головній сторінці. Для зміни домену потрібно оновити DNS/SSL/Nginx та адміністраторський параметр public_url.</p><a href="/" class="button primary">Перейти у Synchro Disk →</a></div>
+  </section>
+  <footer>Synchro v0.4.1 · Rust + SQLite · aaPanel / Nginx · <span>Owner controlled</span></footer>
+</main>
+</div>
+</body>
+</html>
