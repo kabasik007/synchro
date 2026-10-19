@@ -14,6 +14,7 @@ use rusqlite::{params, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sha2::{Digest, Sha256};
+use futures_util::StreamExt;
 use std::path::PathBuf;
 use tokio::{fs, io::{AsyncReadExt, AsyncWriteExt}};
 use tokio_util::io::ReaderStream;
@@ -203,13 +204,16 @@ pub(crate) async fn create_transfer(
             |r| r.get(0),
         ).map_err(|_| ApiError::internal())?;
         if !exists { return Err(ApiError::not_found()); }
+        // Acknowledged files remain recoverable for one hour and still occupy disk.
         let reserved: i64 = db.query_row(
             "SELECT COALESCE(SUM(
                  CASE WHEN status IN ('uploading','finalizing') THEN 2*size_bytes
                       ELSE size_bytes END),0)
              FROM transfers
-             WHERE status IN ('uploading','finalizing','ready') AND expires_at > ?1",
-            [created], |r| r.get(0),
+             WHERE (status IN ('uploading','finalizing','ready')
+                    OR (status='delivered' AND delivered_at > ?2))
+               AND expires_at > ?1",
+            params![created, created - 3600], |r| r.get(0),
         ).map_err(|_| ApiError::internal())?;
         if reserved > state.config.storage_quota - reserve_bytes {
             return Err(ApiError(StatusCode::INSUFFICIENT_STORAGE,
@@ -272,6 +276,13 @@ pub(crate) async fn put_chunk(
     if bytes.len() != expected {
         return Err(ApiError::bad(format!("Chunk must contain exactly {expected} bytes")));
     }
+    // The initial status was checked before awaiting an untrusted request body.
+    // Lock + recheck before touching filesystem, otherwise PUT may race finish/prune.
+    let _guard = state.mutation_lock.lock().await;
+    let current = active_transfer_for_sender(&state, &id, &sender)?;
+    if current.status != "uploading" {
+        return Err(ApiError::conflict("Upload is finalizing or no longer active"));
+    }
     let folder = state.config.storage.join("chunks").join(&id);
     fs::create_dir_all(&folder).await.map_err(|_| ApiError::internal())?;
     let path = chunk_path(&state.config.storage, &id, index);
@@ -315,7 +326,12 @@ pub(crate) async fn finish_transfer(
 ) -> Result<Json<TransferInfo>, ApiError> {
     let sender = verify_device(&headers, &state)?;
     let id = safe_id(&id)?;
+    let _guard = state.mutation_lock.lock().await;
     let transfer = active_transfer_for_sender(&state, &id, &sender)?;
+    if transfer.status == "ready" {
+        // A timed-out response may be retried; never assemble an already ready file.
+        return Ok(Json(transfer));
+    }
     if transfer.status != "uploading" {
         return Err(ApiError::conflict("Transfer is not in uploading state"));
     }
@@ -459,14 +475,26 @@ pub(crate) async fn download(
     let device = verify_device(&headers, &state)?;
     let id = safe_id(&id)?;
     let transfer = find_transfer(&state, &id)?;
-    if transfer.recipient_id != device.id || transfer.status != "ready"
+    // Acknowledged transfers have a one-hour recovery window; re-download is
+    // permitted in case the browser's Save dialog failed after ACK.
+    let in_grace = transfer.status == "delivered"
+        && transfer.delivered_at.map(|t| t > now() - 3600).unwrap_or(false);
+    if transfer.recipient_id != device.id || (!in_grace && transfer.status != "ready")
         || transfer.expires_at <= now()
     {
         return Err(ApiError::not_found());
     }
+    let permit = state.download_slots.clone().try_acquire_owned()
+        .map_err(|_| ApiError(StatusCode::SERVICE_UNAVAILABLE,
+            "Too many concurrent downloads, retry later".into()))?;
     let file = fs::File::open(state.config.storage.join("objects").join(format!("{id}.blob")))
         .await.map_err(|_| ApiError::not_found())?;
-    let mut response = Response::new(Body::from_stream(ReaderStream::new(file)));
+    // Keep the permit alive for as long as HTTP response body is being streamed.
+    let stream = ReaderStream::new(file).map(move |item| {
+        let _keep_permit = &permit;
+        item
+    });
+    let mut response = Response::new(Body::from_stream(stream));
     let headers = response.headers_mut();
     headers.insert(header::CONTENT_TYPE, HeaderValue::from_static("application/octet-stream"));
     headers.insert(header::X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"));
@@ -493,6 +521,7 @@ pub(crate) async fn ack(
 ) -> Result<StatusCode, ApiError> {
     let device = verify_device(&headers, &state)?;
     let id = safe_id(&id)?;
+    let _guard = state.mutation_lock.lock().await;
     let transfer = find_transfer(&state, &id)?;
     if transfer.recipient_id != device.id || transfer.expires_at <= now() ||
         transfer.status != "ready"
@@ -511,10 +540,9 @@ pub(crate) async fn ack(
         ).map_err(|_| ApiError::internal())?;
         if changed != 1 { return Err(ApiError::conflict("Already acknowledged")); }
     }
-    // Retained in metadata until the hourly pruner, but no longer downloadable.
-    if let Err(err) = fs::remove_file(state.config.storage.join("objects").join(format!("{id}.blob"))).await {
-        error!("delivered object cleanup will be retried: {err}");
-    }
+    // Do not delete the only stored copy immediately after client-side ACK.
+    // One-hour recovery window allows the owner to re-download if saving failed.
+    // Periodic prune removes it after grace or normal transfer expiry.
     let _ = state.notifications.send(Signal {
         event_type: "transfer_acknowledged".into(),
         device_id: transfer.sender_id,
