@@ -241,7 +241,7 @@ class MainActivity : Activity() {
             }
         val server = field("https://disk.sitezilla.net", prefs.getString("server", "") ?: "")
         val token = field("64-символьний токен пристрою", prefs.getString("token", "") ?: "", true)
-        val e2ee = field("E2EE ключ (необов'язково, для шифрованих файлів)", "", true)
+        val e2ee = field("E2EE ключ файлу (один ключ за раз; повтори синхронізацію для інших файлів)", "", true)
         gap(card, 10)
         val message = label(card, "Синхронізація запускається вручну. Ключ E2EE не зберігається.", 12f, muted)
         gap(card, 10)

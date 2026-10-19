@@ -127,9 +127,22 @@ async function send() {
   const checkpoint=await api(path+'/chunks');
   if(checkpoint.status==='uploading') {
    const already=new Set(checkpoint.uploaded_indices);
+   const chunkHashes=new Map((checkpoint.uploaded_chunks||[]).map(item=>[item.index,item.sha256]));
+   if(already.size && !chunkHashes.size)throw new Error('Сервер потребує оновлення до Synchro v0.5.1.');
    for(let i=0;i<checkpoint.chunk_count;i++){
-    if(!already.has(i)){
-     const slice=task.payload.slice(i*CHUNK,Math.min(task.payload.size,(i+1)*CHUNK));
+    const slice=task.payload.slice(i*CHUNK,Math.min(task.payload.size,(i+1)*CHUNK));
+    let valid=false;
+    if(already.has(i) && chunkHashes.has(i)){
+     const localHash=await sha256(slice);
+     valid=localHash===chunkHashes.get(i);
+     if(!valid){
+      const gone=await fetch(path+'/chunks/'+i,{
+       method:'DELETE',headers:{Authorization:'Bearer '+deviceToken},cache:'no-store'
+      });
+      if(!gone.ok)throw new Error('Не вдалося видалити пошкоджений чанк '+i);
+     }
+    }
+    if(!valid){
      const response=await fetch(path+'/chunks/'+i,{
       method:'PUT',headers:{Authorization:'Bearer '+deviceToken},body:slice,cache:'no-store'
      });

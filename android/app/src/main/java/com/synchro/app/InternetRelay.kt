@@ -10,6 +10,7 @@ import java.io.ByteArrayOutputStream
 import java.net.URI
 import java.net.URL
 import java.security.MessageDigest
+import javax.crypto.AEADBadTagException
 import javax.crypto.Cipher
 import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.SecretKeySpec
@@ -88,6 +89,7 @@ object InternetRelay {
         var received = 0
         var restored = 0
         var missingKey = 0
+        var invalidKey = 0
         for (i in 0 until items.length()) {
             val item = items.getJSONObject(i)
             if (item.getString("status") != "ready") continue
@@ -103,6 +105,9 @@ object InternetRelay {
             }
             val encrypted = item.optBoolean("encrypted", false)
             if (encrypted && e2eeKey.isBlank()) { missingKey++; continue }
+            if (encrypted && !e2eeKey.matches(Regex("[0-9a-fA-F]{64}"))) {
+                throw IllegalArgumentException("E2EE-ключ має містити рівно 64 hex-символи")
+            }
             if (encrypted && total > MAX_CIPHER)
                 throw IllegalStateException("E2EE файл завеликий для мобільного дешифрування.")
             val name = SynchroConfig.safeName(item.getString("filename"))
@@ -168,12 +173,18 @@ object InternetRelay {
                 // The local verified receipt survives an HTTP ACK failure.
                 ack(base, token, id, expected)
                 received++
+            } catch (_: AEADBadTagException) {
+                // The wrong key for one transfer must not abort downloads of
+                // unrelated ready files. The finally block deletes the pending file.
+                invalidKey++
+                progress("Ключ не підходить для: " + name)
             } finally {
                 download.disconnect()
                 if (local != null) context.contentResolver.delete(local, null, null)
             }
         }
         return "Отримано: " + received + ", збережено раніше: " + restored +
-            ", потрібен E2EE-ключ: " + missingKey
+            ", потрібен E2EE-ключ: " + missingKey +
+            ", неправильний ключ: " + invalidKey
     }
 }
