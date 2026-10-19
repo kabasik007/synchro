@@ -4,7 +4,7 @@ use crate::{
 };
 use axum::{
     body::{to_bytes, Body},
-    extract::{Path, State as AxumState},
+    extract::{Path, Request, State as AxumState},
     http::{header, HeaderMap, HeaderValue, StatusCode},
     response::Response,
     Json,
@@ -240,7 +240,7 @@ pub(crate) async fn put_chunk(
     AxumState(state): AxumState<State>,
     Path((id, index)): Path<(String, u32)>,
     headers: HeaderMap,
-    body: Body,
+    request: Request,
 ) -> Result<StatusCode, ApiError> {
     let sender = verify_device(&headers, &state)?;
     let id = safe_id(&id)?;
@@ -250,7 +250,11 @@ pub(crate) async fn put_chunk(
     }
     let expected = expected_chunk_size(transfer.size_bytes, index)
         .ok_or_else(|| ApiError::bad("Chunk index out of bounds"))?;
-    let bytes = to_bytes(body, CHUNK_BYTES + 1).await
+    // Prevent parallel 8 MiB bodies from exhausting VPS memory.
+    let _permit = state.chunk_slots.clone().try_acquire_owned()
+        .map_err(|_| ApiError(StatusCode::SERVICE_UNAVAILABLE,
+            "Too many concurrent chunk uploads, retry shortly".into()))?;
+    let bytes = to_bytes(request.into_body(), CHUNK_BYTES + 1).await
         .map_err(|_| ApiError(StatusCode::PAYLOAD_TOO_LARGE,
             "Chunk exceeds 8 MiB".into()))?;
     if bytes.len() != expected {
