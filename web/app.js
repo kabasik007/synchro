@@ -1,6 +1,8 @@
 'use strict';
 const $ = id => document.getElementById(id);
 let deviceToken = '', me = null, file = null, recipients = [], ws = null, uploading = false;
+// Download completion is not proof of saving; still require an explicit owner confirmation.
+const verifiedDownloads = new Set();
 const MAX_WEB_SIZE = 64 * 1024 * 1024, CHUNK = 8 * 1024 * 1024;
 function setStatus(id, value, type='') { const el=$(id); el.textContent=value; el.className='status '+type; }
 function size(n) { return n >= 1048576 ? (n/1048576).toFixed(1)+' МБ' : Math.ceil(n/1024)+' КБ'; }
@@ -34,6 +36,7 @@ async function connect() {
  }
 }
 function disconnect() {
+ verifiedDownloads.clear();
  deviceToken='';me=null;file=null;$('deviceToken').value='';$('recipient').replaceChildren(new Option('Не підключено',''));
  $('deviceList').textContent='Підключення відсутнє.';$('inbox').textContent='Підключення відсутнє.';
  $('connection').textContent='● Не підключено';$('send').disabled=true;
@@ -99,7 +102,10 @@ async function loadInbox() {
    info.append(el('strong','',item.filename),el('small','',size(item.size_bytes)+' · '+new Date(item.created_at*1000).toLocaleString()));
    const download=el('button','','⇩ Отримати');
    download.addEventListener('click',()=>downloadFile(item));
-   const ack=el('button','','✓ Доставлено');
+   const ack=el('button','',item.status==='delivered'?'✓ Підтверджено':'✓ Доставлено');
+   ack.disabled=item.status==='delivered'||!verifiedDownloads.has(item.id);
+   if(!ack.disabled) ack.title='SHA-256 перевірено. Підтверди, що файл збережено.';
+   else if(item.status!=='delivered') ack.title='Спочатку завантаж і перевір файл.';
    ack.addEventListener('click',()=>acknowledge(item));
    row.append(el('span','icon',item.filename.toLowerCase().endsWith('.apk')?'◆':'▤'),info,download,ack);
    root.append(row);
@@ -119,16 +125,20 @@ async function downloadFile(item) {
   const hash=await crypto.subtle.digest('SHA-256',bytes);
   const actual=[...new Uint8Array(hash)].map(v=>v.toString(16).padStart(2,'0')).join('');
   if(actual!==item.sha256)throw new Error('Контрольна сума не збігається! Не відкривай файл.');
+  verifiedDownloads.add(item.id);
   const obj=URL.createObjectURL(new Blob([bytes],{type:'application/octet-stream'}));
   const a=document.createElement('a');a.href=obj;a.download=item.filename;a.click();
   setTimeout(()=>URL.revokeObjectURL(obj),30000);
-  setStatus('inboxMessage','✓ SHA-256 перевірено. Після збереження натисни «Доставлено».','success');
+  setStatus('inboxMessage','✓ SHA-256 перевірено. Переконайся, що браузер зберіг файл, тоді підтвердь доставку.','success');
+  await loadInbox();
  }catch(e){setStatus('inboxMessage',e.message,'error')}
 }
 async function acknowledge(item) {
+ if(!verifiedDownloads.has(item.id)) return setStatus('inboxMessage','Спочатку завантаж файл і перевір SHA-256.','error');
  if(!confirm('Підтвердити, що файл збережено на пристрої? Після цього його буде видалено із серверного сховища.'))return;
  try {
   await api('/api/v1/transfers/'+encodeURIComponent(item.id)+'/ack',{method:'POST',json:{sha256:item.sha256}});
+  verifiedDownloads.delete(item.id);
   await loadInbox();
  }catch(e){setStatus('inboxMessage',e.message,'error')}
 }
