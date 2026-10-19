@@ -123,6 +123,10 @@ You also must:
 
 If using the same underlying SQLite and file directory, the devices and transfers remain; **do not recreate the database** for a domain change. Do not re-run the initial setup wizard.
 
+### Server analytics after installation
+
+In the main Synchro Disk page, expand the administrator area, enter your admin token and click **↻ Оновити** under Server analytics. The secured `GET /api/v1/admin/stats` endpoint reports active devices, uploads, pending deliveries, acknowledgements, reserved bytes, quota, real free space, retention and configured public_url. No analytics account or third-party telemetry service is required.
+
 ## 8. SQLite maintenance
 
 The server maintains /var/lib/synchro/synchro.sqlite3 in WAL mode. Device tokens are stored hashed; metadata and settings are stored as JSON/text/numbers. The actual uploaded file bytes live under /var/lib/synchro/files.
