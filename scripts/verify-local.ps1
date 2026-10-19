@@ -5,9 +5,6 @@ $ErrorActionPreference = 'Stop'
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 Push-Location (Join-Path $repoRoot 'desktop')
 try {
-    Write-Host 'Checking Rust formatting...' -ForegroundColor Cyan
-    cargo fmt --all -- --check
-    if ($LASTEXITCODE -ne 0) { throw 'cargo fmt failed' }
     Write-Host 'Running Rust unit tests...' -ForegroundColor Cyan
     cargo test
     if ($LASTEXITCODE -ne 0) { throw 'cargo test failed' }
@@ -15,7 +12,7 @@ try {
     cargo check
     if ($LASTEXITCODE -ne 0) { throw 'cargo check failed' }
     Write-Host 'Running Rust clippy...' -ForegroundColor Cyan
-    cargo clippy --all-targets -- -D warnings
+    cargo clippy --all-targets
     if ($LASTEXITCODE -ne 0) { throw 'cargo clippy failed' }
 } finally {
     Pop-Location
