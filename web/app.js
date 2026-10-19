@@ -144,6 +144,17 @@ async function register() {
   if(me)await loadDevices();
  }catch(e){setStatus('registerMessage',e.message,'error')}
 }
+async function changePublicDomain(){
+ const input=$('adminOrigin').value.trim();
+ if(!input) return setStatus('adminDomainMessage','Введи HTTPS-адресу.', 'error');
+ try{
+  const changed=await api('/api/v1/admin/origin',{admin:true,method:'POST',json:{public_url:input}});
+  setStatus('adminDomainMessage','✓ Нову адресу збережено: '+changed.public_url+
+    '. Тепер зміни DNS, SSL і server_name у aaPanel/Cloudflare.', 'success');
+ }catch(e){
+  setStatus('adminDomainMessage',e.message,'error');
+ }
+}
 function live(){
  if(ws){ws.close();ws=null}
  const url=(location.protocol==='https:'?'wss://':'ws://')+location.host+'/ws';
@@ -157,6 +168,8 @@ function live(){
 }
 $('connect').addEventListener('click',connect);$('disconnect').addEventListener('click',disconnect);
 $('refresh').addEventListener('click',loadInbox);$('register').addEventListener('click',register);
+$('changeDomain').addEventListener('click',changePublicDomain);
+$('adminOrigin').value=location.protocol==='https:'?location.origin:'';
 $('choose').addEventListener('click',()=>$('uploadInput').click());
 $('uploadInput').addEventListener('change',e=>selectFile(e.target.files?.[0]));
 $('send').addEventListener('click',send);
