@@ -33,7 +33,7 @@ pub(crate) async fn status(
 ) -> Result<Json<SetupStatus>, ApiError> {
     Ok(Json(SetupStatus {
         installed: is_installed(&state)?,
-        version: "0.4.1",
+        version: "0.4.2",
         database: "SQLite",
     }))
 }
