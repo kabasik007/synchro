@@ -214,12 +214,33 @@ pub(crate) async fn prune_expired(state: &State) -> Result<usize, ApiError> {
         rows.filter_map(Result::ok).collect()
     };
     let mut deleted = 0;
-    for id in expired {
+    'items: for id in expired {
         // UUID is validated even though values came from SQLite.
         let id = safe_id(&id)?;
-        let _ = tokio::fs::remove_file(state.config.storage.join("objects").join(format!("{id}.blob"))).await;
-        let _ = tokio::fs::remove_file(state.config.storage.join("objects").join(format!("{id}.tmp"))).await;
-        let _ = tokio::fs::remove_dir_all(state.config.storage.join("chunks").join(&id)).await;
+        let paths = [
+            state.config.storage.join("objects").join(format!("{id}.blob")),
+            state.config.storage.join("objects").join(format!("{id}.tmp")),
+        ];
+        for path in paths {
+            match tokio::fs::remove_file(&path).await {
+                Ok(()) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => {
+                    error!("cleanup retry needed for {id}: {e}");
+                    continue 'items;
+                }
+            }
+        }
+        let chunk_dir = state.config.storage.join("chunks").join(&id);
+        match tokio::fs::remove_dir_all(&chunk_dir).await {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => {
+                error!("chunk cleanup retry needed for {id}: {e}");
+                continue 'items;
+            }
+        }
+        // Retain metadata until cleanup succeeds, so future prunes can retry.
         let db = state.db.lock().map_err(|_| ApiError::internal())?;
         let changed = db.execute("DELETE FROM transfers WHERE id = ?1", [&id])
             .map_err(|_| ApiError::internal())?;
