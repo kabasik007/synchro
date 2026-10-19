@@ -44,6 +44,7 @@ fi
 install -d -m 0755 /opt/synchro/bin
 install -d -o synchro -g synchro -m 0700 /var/lib/synchro
 install -d -o synchro -g synchro -m 0700 /var/lib/synchro/files
+install -d -o synchro -g synchro -m 0700 /var/lib/synchro/backups
 install -d -o root -g root -m 0700 /etc/synchro
 install -m 0755 "$BIN" /opt/synchro/bin/synchro-server
 
@@ -55,6 +56,7 @@ SYNCHRO_ADMIN_TOKEN=$SECRET
 SYNCHRO_BIND=127.0.0.1:8787
 SYNCHRO_STORAGE_DIR=/var/lib/synchro/files
 SYNCHRO_DB_PATH=/var/lib/synchro/synchro.sqlite3
+SYNCHRO_BACKUP_DIR=/var/lib/synchro/backups
 SYNCHRO_STORAGE_QUOTA_BYTES=5368709120
 SYNCHRO_TTL_HOURS=72
 RUST_LOG=synchro_server=info

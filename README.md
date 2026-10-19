@@ -1,4 +1,10 @@
-# Synchro · Rust → Android
+# Synchro · Windows ↔ Android ↔ Internet Relay
+
+**v0.5.0 source milestone (not yet compiled or deployed).** Internet Mode now includes a Rust/Axum relay, recoverable chunk checkpoints, background finalization, private daily SQLite snapshots, browser-based AES-256-GCM encryption and native HTTPS send/receive adapters. LAN/Tailscale mode remains.
+
+Security boundary: **browser ↔ browser and browser → Android may use E2EE with a separately exchanged key**. The native Windows Internet sender is not encrypted end-to-end yet (only HTTPS/TLS). This milestone is not production approved. See [v0.5 release/testing notes](docs/RELEASE-0.5.0.md).
+
+## Existing LAN edition
 
 **Drop a freshly built APK on your Windows PC; receive it directly on Android without Viber, archives, or cloud uploads.**
 
