@@ -66,6 +66,11 @@
     <div id="registerMessage" class="status" role="status"></div>
     <div id="createdToken" class="token-output hidden"></div>
     <p class="warning" style="margin-top:10px">Новий токен показується лише один раз. Збережи його в менеджері паролів. Не передавай адмінтокен пристроям.</p>
+    <div class="field"><label for="adminOrigin">Публічна адреса сервера (можна змінити після встановлення)</label>
+      <div class="row"><input id="adminOrigin" class="grow" type="url" placeholder="https://disk.sitezilla.net"><button id="changeDomain">Оновити адресу</button></div>
+      <small class="subtle">Оновлює адресу в SQLite, але не змінює DNS, SSL або aaPanel Nginx — їх потрібно налаштувати окремо.</small>
+      <div id="adminDomainMessage" class="status" role="status"></div>
+    </div>
    </details>
   </section>
  </div>
