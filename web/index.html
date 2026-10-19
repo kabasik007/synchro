@@ -12,7 +12,7 @@
 <div class="app">
 <aside class="sidebar">
  <div class="brand"><span class="logo">ϟ</span><span>Synchro</span></div>
- <p class="subtle">Internet Mode · v0.4.2</p>
+ <p class="subtle">Internet Mode · v0.5.0</p>
  <div class="nav"><span class="active">↔ &nbsp; Файли</span><span>▣ &nbsp; Пристрої</span><span>☁ &nbsp; Сервер</span><span>⚙ &nbsp; Налаштування</span></div>
  <div class="sidebar-foot">SiteZilla · Власний файловий сервер</div>
 </aside>
@@ -46,6 +46,14 @@
    </div>
    <input id="uploadInput" type="file" class="hidden" aria-label="Вибери файл">
    <div id="selectedFile" class="status"></div>
+   <div class="field">
+    <label><input id="encrypt" type="checkbox" checked> 🔐 E2EE — AES-256-GCM</label>
+    <small>Ключ генерується локально; передай його одержувачу окремим захищеним каналом. Сервер бачить назву файлу, але не вміст і не ключ.</small>
+   </div>
+   <div class="field hidden" id="e2eeKeyBox">
+    <label for="e2eeKey">Секретний ключ файлу — скопіюй до закриття вкладки</label>
+    <div class="row"><input id="e2eeKey" class="grow" type="text" readonly autocomplete="off"><button id="copyE2EEKey">Копіювати ключ</button></div>
+   </div>
    <div class="row" style="margin:10px 0"><button id="send" class="primary" disabled>➤ Надіслати</button><span class="subtle">Блоки по 8 МБ</span></div>
    <progress id="uploadProgress" max="100" value="0" class="hidden"></progress>
    <div id="uploadMessage" class="status" role="status"></div>
@@ -78,7 +86,7 @@
    </details>
   </section>
  </div>
- <footer>Synchro v0.4 MVP · Файли на сервері зберігаються без наскрізного шифрування. Доступ захищає токен, передачу — HTTPS. Не використовуй для секретних даних до впровадження E2EE. Файли за замовчуванням мають термін зберігання 72 години.</footer>
+ <footer>Synchro v0.5 · AES-256-GCM шифрує вміст у браузері, якщо E2EE увімкнено. Ключ передавай окремо. Незашифровані та старі файли залишаються доступними серверу. Файли за замовчуванням мають термін зберігання 72 години.</footer>
 </main>
 </div>
 <script defer src="/app.js"></script>

@@ -1,6 +1,7 @@
 'use strict';
 const $ = id => document.getElementById(id);
 let deviceToken = '', me = null, file = null, recipients = [], ws = null, uploading = false;
+let pendingUpload = null;
 // Download completion is not proof of saving; still require an explicit owner confirmation.
 const verifiedDownloads = new Set();
 const MAX_WEB_SIZE = 64 * 1024 * 1024, CHUNK = 8 * 1024 * 1024;
@@ -37,7 +38,7 @@ async function connect() {
 }
 function disconnect() {
  verifiedDownloads.clear();
- deviceToken='';me=null;file=null;$('deviceToken').value='';$('recipient').replaceChildren(new Option('Не підключено',''));
+ pendingUpload=null;deviceToken='';me=null;file=null;$('deviceToken').value='';$('recipient').replaceChildren(new Option('Не підключено',''));
  $('deviceList').textContent='Підключення відсутнє.';$('inbox').textContent='Підключення відсутнє.';
  $('connection').textContent='● Не підключено';$('send').disabled=true;
  if(ws){ws.close();ws=null}setStatus('loginMessage','Сеанс завершено.');
@@ -54,6 +55,7 @@ async function loadDevices() {
  }
 }
 function selectFile(candidate) {
+ if(file!==candidate) pendingUpload=null;
  file=candidate||null;$('send').disabled=!file || !me || uploading;
  if(!file){setStatus('selectedFile','');return}
  setStatus('selectedFile',file.name+' · '+size(file.size)+(file.size>MAX_WEB_SIZE?' · Занадто великий для вебклієнта':''));
@@ -64,34 +66,86 @@ async function sha256(blob) {
  const digest=await crypto.subtle.digest('SHA-256',data);
  return [...new Uint8Array(digest)].map(v=>v.toString(16).padStart(2,'0')).join('');
 }
+
+const hex = bytes => [...bytes].map(v=>v.toString(16).padStart(2,'0')).join('');
+function keyFromHex(value) {
+ if(!/^[0-9a-fA-F]{64}$/.test(value))throw new Error('Ключ має містити 64 шістнадцяткові символи.');
+ return Uint8Array.from(value.match(/.{2}/g), part=>parseInt(part,16));
+}
+async function seal(source) {
+ if(!isSecureContext || !crypto.subtle)throw new Error('E2EE працює лише через HTTPS.');
+ const material=crypto.getRandomValues(new Uint8Array(32));
+ const iv=crypto.getRandomValues(new Uint8Array(12));
+ const key=await crypto.subtle.importKey('raw',material,{name:'AES-GCM'},false,['encrypt']);
+ const ciphertext=await crypto.subtle.encrypt({name:'AES-GCM',iv},key,await source.arrayBuffer());
+ return {payload:new Blob([new TextEncoder().encode('SYNCHRO1'),iv,ciphertext]),key:hex(material)};
+}
+async function unseal(data,secret) {
+ const bytes=new Uint8Array(data);
+ if(bytes.length<37 || new TextDecoder().decode(bytes.subarray(0,8))!=='SYNCHRO1')
+   throw new Error('Невідомий формат E2EE.');
+ const key=await crypto.subtle.importKey('raw',keyFromHex(secret),{name:'AES-GCM'},false,['decrypt']);
+ try {
+  return await crypto.subtle.decrypt({name:'AES-GCM',iv:bytes.subarray(8,20)},key,bytes.subarray(20));
+ } catch { throw new Error('Неправильний E2EE-ключ або пошкоджений файл.'); }
+}
+async function awaitFinalization(id) {
+ for(let i=0;i<30;i++){
+  const state=await api('/api/v1/transfers/'+encodeURIComponent(id));
+  if(state.status==='ready')return;
+  if(state.status!=='finalizing')throw new Error('Фіналізація не вдалася. Повтори передавання.');
+  setStatus('uploadMessage','Перевірка й збирання на сервері…');
+  await new Promise(resolve=>setTimeout(resolve,2000));
+ }
+ throw new Error('Збирання ще триває. Повторно натисни «Надіслати», щоб перевірити статус.');
+}
 async function send() {
- if(!me || !file || uploading || !($('recipient').value) || file.size>MAX_WEB_SIZE)return;
+ if(!me || !file || uploading || !$('recipient').value || file.size>MAX_WEB_SIZE || file.size===0)return;
  uploading=true;$('send').disabled=true;
+ const recipient=$('recipient').value, encrypted=$('encrypt').checked;
  const progress=$('uploadProgress');progress.classList.remove('hidden');progress.value=0;
  try {
-  setStatus('uploadMessage','Розрахунок SHA-256…');
-  const hash=await sha256(file);
-  const created=await api('/api/v1/transfers',{method:'POST',json:{
-    to_device_id:$('recipient').value,filename:file.name,
-    size_bytes:file.size,sha256:hash
-  }});
-  const id=created.transfer.id;
-  for(let i=0;i<created.chunk_count;i++){
-   const slice=file.slice(i*CHUNK,Math.min(file.size,(i+1)*CHUNK));
-   const res=await fetch('/api/v1/transfers/'+encodeURIComponent(id)+'/chunks/'+i,{
-    method:'PUT',headers:{Authorization:'Bearer '+deviceToken},
-    body:slice,cache:'no-store'
-   });
-   if(!res.ok) {const j=await res.json().catch(()=>({}));throw new Error(j.error||'Не вдалося надіслати блок '+i);}
-   progress.value=Math.round(100*(i+1)/created.chunk_count);
-   setStatus('uploadMessage','Передавання… '+progress.value+'%');
+  if(!pendingUpload || pendingUpload.source!==file ||
+     pendingUpload.recipient!==recipient || pendingUpload.encrypted!==encrypted) {
+   setStatus('uploadMessage',encrypted?'Шифруємо AES-256-GCM у браузері…':'Розрахунок SHA-256…');
+   const sealed=encrypted?await seal(file):{payload:file,key:null};
+   pendingUpload={source:file,recipient,encrypted,payload:sealed.payload,
+    key:sealed.key,hash:await sha256(sealed.payload),id:null};
   }
-  await api('/api/v1/transfers/'+encodeURIComponent(id)+'/finish',{method:'POST'});
-  setStatus('uploadMessage','✓ Файл на сервері. Одержувач побачить його у вхідних.','success');
-  file=null;$('uploadInput').value='';setStatus('selectedFile','');
- }catch(e){setStatus('uploadMessage',e.message,'error')}
- finally{uploading=false;$('send').disabled=!file; }
+  const task=pendingUpload;
+  $('e2eeKeyBox').classList.toggle('hidden',!task.key);
+  $('e2eeKey').value=task.key||'';
+  if(!task.id) {
+   const created=await api('/api/v1/transfers',{method:'POST',json:{
+    to_device_id:recipient,filename:file.name,size_bytes:task.payload.size,
+    sha256:task.hash,encrypted
+   }});
+   task.id=created.transfer.id;
+  }
+  const path='/api/v1/transfers/'+encodeURIComponent(task.id);
+  const checkpoint=await api(path+'/chunks');
+  if(checkpoint.status==='uploading') {
+   const already=new Set(checkpoint.uploaded_indices);
+   for(let i=0;i<checkpoint.chunk_count;i++){
+    if(!already.has(i)){
+     const slice=task.payload.slice(i*CHUNK,Math.min(task.payload.size,(i+1)*CHUNK));
+     const response=await fetch(path+'/chunks/'+i,{
+      method:'PUT',headers:{Authorization:'Bearer '+deviceToken},body:slice,cache:'no-store'
+     });
+     if(!response.ok){const j=await response.json().catch(()=>({}));throw new Error(j.error||'Блок '+i+' не прийнято');}
+    }
+    progress.value=Math.round(100*(i+1)/checkpoint.chunk_count);
+    setStatus('uploadMessage','Передавання… '+progress.value+'%');
+   }
+   await api(path+'/finish',{method:'POST'});
+  }
+  if(checkpoint.status!=='ready') await awaitFinalization(task.id);
+  setStatus('uploadMessage','✓ Файл готовий для одержувача.','success');
+  pendingUpload=null;file=null;$('uploadInput').value='';setStatus('selectedFile','');
+ }catch(e){setStatus('uploadMessage',e.message+' Повторна спроба продовжить із готових блоків.','error');}
+ finally{uploading=false;$('send').disabled=!file || !me;}
 }
+
 async function loadInbox() {
  if(!me)return;
  try{
@@ -99,7 +153,7 @@ async function loadInbox() {
   if(!list.length)root.append(el('p','subtle','Нових файлів поки немає.'));
   for(const item of list) {
    const row=el('div','file'),info=el('div','info');
-   info.append(el('strong','',item.filename),el('small','',size(item.size_bytes)+' · '+new Date(item.created_at*1000).toLocaleString()));
+   info.append(el('strong','',(item.encrypted?'🔐 ':'')+item.filename),el('small','',size(item.size_bytes)+' · '+new Date(item.created_at*1000).toLocaleString()));
    const download=el('button','','⇩ Отримати');
    download.addEventListener('click',()=>downloadFile(item));
    const ack=el('button','',item.status==='delivered'?'✓ Підтверджено':'✓ Доставлено');
@@ -116,22 +170,27 @@ async function loadInbox() {
 async function downloadFile(item) {
  try {
   setStatus('inboxMessage','Отримуємо й перевіряємо '+item.filename+'…');
-  if(item.size_bytes>MAX_WEB_SIZE)throw new Error('Вебклієнт завантажує до 64 МБ. Для більшого файлу потрібен нативний клієнт.');
-  const response=await fetch('/api/v1/transfers/'+encodeURIComponent(item.id)+'/download',{
+  if(item.size_bytes>MAX_WEB_SIZE+64)throw new Error('Вебклієнт завантажує до 64 МБ.');
+  const res=await fetch('/api/v1/transfers/'+encodeURIComponent(item.id)+'/download',{
    headers:{Authorization:'Bearer '+deviceToken},cache:'no-store'
   });
-  if(!response.ok)throw new Error('HTTP '+response.status);
-  const bytes=await response.arrayBuffer();
-  const hash=await crypto.subtle.digest('SHA-256',bytes);
-  const actual=[...new Uint8Array(hash)].map(v=>v.toString(16).padStart(2,'0')).join('');
-  if(actual!==item.sha256)throw new Error('Контрольна сума не збігається! Не відкривай файл.');
+  if(!res.ok)throw new Error('HTTP '+res.status);
+  const bytes=await res.arrayBuffer();
+  if(hex(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes)))!==item.sha256)
+   throw new Error('SHA-256 не збігається. Не відкривай файл!');
+  let result=bytes;
+  if(item.encrypted){
+   const secret=prompt('Введи E2EE-ключ, отриманий ОКРЕМО від відправника (64 символи)');
+   if(!secret)throw new Error('Для E2EE потрібен секретний ключ.');
+   result=await unseal(bytes,secret.trim());
+  }
   verifiedDownloads.add(item.id);
-  const obj=URL.createObjectURL(new Blob([bytes],{type:'application/octet-stream'}));
-  const a=document.createElement('a');a.href=obj;a.download=item.filename;a.click();
-  setTimeout(()=>URL.revokeObjectURL(obj),30000);
-  setStatus('inboxMessage','✓ SHA-256 перевірено. Переконайся, що браузер зберіг файл, тоді підтвердь доставку.','success');
+  const url=URL.createObjectURL(new Blob([result],{type:'application/octet-stream'}));
+  const link=document.createElement('a');link.href=url;link.download=item.filename;link.click();
+  setTimeout(()=>URL.revokeObjectURL(url),30000);
+  setStatus('inboxMessage','✓ SHA-256'+(item.encrypted?' і AES-GCM':'')+' перевірено. Підтвердь збереження файлу.','success');
   await loadInbox();
- }catch(e){setStatus('inboxMessage',e.message,'error')}
+ }catch(e){setStatus('inboxMessage',e.message,'error');}
 }
 async function acknowledge(item) {
  if(!verifiedDownloads.has(item.id)) return setStatus('inboxMessage','Спочатку завантаж файл і перевір SHA-256.','error');
@@ -198,6 +257,8 @@ $('adminOrigin').value=location.protocol==='https:'?location.origin:'';
 $('choose').addEventListener('click',()=>$('uploadInput').click());
 $('uploadInput').addEventListener('change',e=>selectFile(e.target.files?.[0]));
 $('send').addEventListener('click',send);
+$('encrypt').addEventListener('change',()=>{pendingUpload=null;});
+$('copyE2EEKey').addEventListener('click',()=>navigator.clipboard.writeText($('e2eeKey').value).catch(()=>{}));
 const drop=$('drop');
 drop.addEventListener('dragover',e=>{e.preventDefault();drop.classList.add('drag')});
 drop.addEventListener('dragleave',()=>drop.classList.remove('drag'));
