@@ -70,15 +70,21 @@ systemctl daemon-reload
 systemctl enable synchro-server
 systemctl restart synchro-server
 
-# SECURITY: Never copy web files to an aaPanel-writable webroot as root.
-# A compromised site user could place symlinks at target paths and redirect
-# root's writes outside the site. Static deployment is a separate unprivileged step.
-echo "Static web files were NOT copied by the root bootstrap."
-echo "Use aaPanel File Manager, or run as the site owner (often www):"
-echo "  sudo -u www bash $REPO/deploy/publish-web.sh $DOMAIN"
+# Stage public files in root-owned /opt (NOT in the writable aaPanel site).
+# Site owner can then publish even if repo is inside a private SSH home.
+STAGING="/opt/synchro/staged-web"
+install -d -m 0755 "$STAGING" "$STAGING/web" "$STAGING/web/install" "$STAGING/deploy"
+for relative in index.html app.css app.js install/index.html install/setup.css install/setup.js; do
+  install -m 0644 "$REPO/web/$relative" "$STAGING/web/$relative"
+done
+install -m 0644 "$SCRIPT_DIR/publish-web.sh" "$STAGING/deploy/publish-web.sh"
+
+# SECURITY: root never writes to the site user-controlled webroot.
+echo "Static assets staged at $STAGING. Publish as the aaPanel site owner:"
+echo "  sudo -u www bash $STAGING/deploy/publish-web.sh $DOMAIN"
 
 echo "Synchro prepared. Next:"
-echo "  1. Publish static web files using the aaPanel site user (never root)."
+echo "  1. Publish staged files as the aaPanel site owner (often www)."
 echo "  2. Merge deploy/nginx-synchro.conf into the HTTPS vhost for $DOMAIN."
 echo "  3. Run: nginx -t && systemctl reload nginx"
 echo "  4. Test: curl -fsS http://127.0.0.1:8787/health"
