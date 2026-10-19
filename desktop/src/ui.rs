@@ -69,7 +69,7 @@ fn sidebar(ui: &mut egui::Ui, app: &mut SynchroApp) {
         ui.label(RichText::new("ϟ").size(44.0).color(BLUE).strong());
         ui.vertical(|ui| {
             title(ui, "Synchro", 24.0);
-            caption(ui, "v0.3.0 · Rust + Android");
+            caption(ui, "v0.3.1 · Rust + Android");
         });
     });
     ui.add_space(35.0);
@@ -381,7 +381,7 @@ fn settings_page(ui: &mut egui::Ui, app: &mut SynchroApp) {
 
 fn about(ui: &mut egui::Ui) {
     title(ui, "Synchro", 32.0);
-    caption(ui, "v0.3.0 · Open source · MIT");
+    caption(ui, "v0.3.1 · Open source · MIT");
     ui.add_space(18.0);
     card(ui, |ui| {
         title(ui, "Швидше, ніж пересилати через месенджер", 18.0);
