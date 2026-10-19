@@ -27,6 +27,8 @@
 
 **Preparation in aaPanel:** create a static website with HTTPS and root at `/www/wwwroot/disk.sitezilla.net` (or another hostname). Remove aaPanel's default index page *only after confirming the folder belongs to Synchro*. Database selection: **none**, since SQLite is created by the Rust server.
 
+For a complete non-root source check, run `bash deploy/verify-source.sh` from the repository root; it checks shell syntax, browser JavaScript (if Node.js is available), Rust tests/types/lints and builds the release binary.
+
 Run as your SSH user on Ubuntu:
 
 ```bash
