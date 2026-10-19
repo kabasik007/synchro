@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use futures_util::StreamExt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tokio::{fs, io::{AsyncReadExt, AsyncWriteExt}};
 use tokio_util::io::ReaderStream;
 use tracing::error;
@@ -332,6 +332,25 @@ pub(crate) struct ChunkStatus {
     chunk_size: usize,
     chunk_count: i64,
     uploaded_indices: Vec<u32>,
+    uploaded_chunks: Vec<ChunkDigest>,
+}
+
+#[derive(Serialize)]
+pub(crate) struct ChunkDigest {
+    index: u32,
+    sha256: String,
+}
+
+async fn disk_sha256(path: &Path) -> Result<String, ApiError> {
+    let mut file = fs::File::open(path).await.map_err(|_| ApiError::internal())?;
+    let mut digest = Sha256::new();
+    let mut buffer = [0u8; 64 * 1024];
+    loop {
+        let n = file.read(&mut buffer).await.map_err(|_| ApiError::internal())?;
+        if n == 0 { break; }
+        digest.update(&buffer[..n]);
+    }
+    Ok(hex::encode(digest.finalize()))
 }
 
 pub(crate) async fn chunk_status(
@@ -344,6 +363,7 @@ pub(crate) async fn chunk_status(
     let _guard = state.mutation_lock.lock().await;
     let transfer = active_transfer_for_sender(&state, &id, &sender)?;
     let mut uploaded_indices = Vec::new();
+    let mut uploaded_chunks = Vec::new();
     if transfer.status == "uploading" || transfer.status == "finalizing" {
         let folder = state.config.storage.join("chunks").join(&id);
         match fs::read_dir(folder).await {
@@ -358,6 +378,7 @@ pub(crate) async fn chunk_status(
                         let ty = entry.file_type().await.map_err(|_| ApiError::internal())?;
                         if ty.is_file() && entry.metadata().await
                             .map_err(|_| ApiError::internal())?.len() == size as u64 {
+                            uploaded_chunks.push(ChunkDigest { index, sha256: disk_sha256(&entry.path()).await? });
                             uploaded_indices.push(index);
                         }
                     }
@@ -371,8 +392,31 @@ pub(crate) async fn chunk_status(
     Ok(Json(ChunkStatus {
         transfer_id: id, status: transfer.status,
         chunk_size: CHUNK_BYTES, chunk_count: chunk_count(transfer.size_bytes),
-        uploaded_indices,
+        uploaded_indices, uploaded_chunks,
     }))
+}
+
+/// Delete an individual persisted chunk so an authorized sender can recover corruption.
+pub(crate) async fn delete_chunk(
+    AxumState(state): AxumState<State>,
+    Path((id, index)): Path<(String, u32)>,
+    headers: HeaderMap,
+) -> Result<StatusCode, ApiError> {
+    let sender = verify_device(&headers, &state)?;
+    let id = safe_id(&id)?;
+    let _guard = state.mutation_lock.lock().await;
+    let transfer = active_transfer_for_sender(&state, &id, &sender)?;
+    if transfer.status != "uploading" {
+        return Err(ApiError::conflict("Cannot replace a finalized chunk"));
+    }
+    if expected_chunk_size(transfer.size_bytes, index).is_none() {
+        return Err(ApiError::bad("Chunk index out of bounds"));
+    }
+    match fs::remove_file(chunk_path(&state.config.storage, &id, index)).await {
+        Ok(()) => Ok(StatusCode::NO_CONTENT),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(StatusCode::NO_CONTENT),
+        Err(_) => Err(ApiError::internal()),
+    }
 }
 
 pub(crate) async fn finish_transfer(
@@ -409,8 +453,12 @@ pub(crate) async fn finish_transfer(
     let worker_id = id;
     let worker_transfer = transfer.clone();
     tokio::spawn(async move {
+        // A finalizing transfer cannot accept PUT. Prune explicitly excludes
+        // finalizing records while chunks are being assembled and verified.
+        let Ok(_permit) = worker_state.finalize_slots.acquire().await else { return };
+        let result = assemble_transfer(&worker_state, &worker_transfer).await;
         let _guard = worker_state.mutation_lock.lock().await;
-        if let Err(err) = assemble_transfer(&worker_state, &worker_transfer).await {
+        if let Err(err) = result {
             error!("finalization {} failed: {}", worker_id, err.1);
             let _ = fs::remove_file(worker_state.config.storage.join("objects")
                 .join(format!("{worker_id}.tmp"))).await;
@@ -431,6 +479,10 @@ pub(crate) async fn finish_transfer(
         if published != 1 {
             let _ = fs::remove_file(worker_state.config.storage.join("objects")
                 .join(format!("{worker_id}.blob"))).await;
+            if let Ok(db) = worker_state.db.lock() {
+                let _ = db.execute("UPDATE transfers SET status='uploading'
+                    WHERE id=?1 AND status='finalizing'", [&worker_id]);
+            }
             return;
         }
         let _ = fs::remove_dir_all(worker_state.config.storage.join("chunks")

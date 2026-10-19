@@ -46,9 +46,10 @@ pub(crate) struct State {
     pub config: Arc<Config>,
     pub notifications: broadcast::Sender<Signal>,
     pub chunk_slots: Arc<Semaphore>,
-    // One mutation gate keeps PUT, finish, ACK, and expiry cleanup consistent.
-    // Intentionally conservative for a small, single-owner VPS.
+    // Short mutation gate for writes, metadata publication and pruning.
+    // Background file assembly does not hold this gate.
     pub mutation_lock: Arc<AsyncMutex<()>>,
+    pub finalize_slots: Arc<Semaphore>,
     pub ws_slots: Arc<Semaphore>,
     pub download_slots: Arc<Semaphore>,
 }
@@ -214,16 +215,20 @@ fn init_db(path: &Path) -> Result<Connection, Box<dyn std::error::Error>> {
             "ALTER TABLE devices ADD COLUMN revoked INTEGER NOT NULL DEFAULT 0;"
         )?;
     }
-    let has_encrypted = {
+    let (has_encrypted, has_delivered_at) = {
         let mut statement = db.prepare("PRAGMA table_info(transfers)")?;
         let names = statement.query_map([], |row| row.get::<_, String>(1))?;
-        let found = names.filter_map(Result::ok).any(|name| name == "encrypted");
-        found
+        let cols = names.collect::<Result<Vec<_>, _>>()?;
+        (cols.iter().any(|name| name == "encrypted"),
+         cols.iter().any(|name| name == "delivered_at"))
     };
+    if !has_delivered_at {
+        db.execute_batch("ALTER TABLE transfers ADD COLUMN delivered_at INTEGER;")?;
+    }
     if !has_encrypted {
         db.execute_batch("ALTER TABLE transfers ADD COLUMN encrypted INTEGER NOT NULL DEFAULT 0;")?;
     }
-    db.execute_batch("PRAGMA user_version=3;")?;
+    db.execute_batch("PRAGMA user_version=4;")?;
 
     // An interrupted finalization should be retried rather than stuck forever.
     db.execute(
@@ -239,7 +244,7 @@ pub(crate) async fn prune_expired(state: &State) -> Result<usize, ApiError> {
     let expired: Vec<String> = {
         let db = state.db.lock().map_err(|_| ApiError::internal())?;
         let mut statement = db.prepare(
-            "SELECT id FROM transfers WHERE expires_at <= ?1 OR (status = 'delivered' AND delivered_at <= ?2)"
+            "SELECT id FROM transfers WHERE status != 'finalizing' AND (expires_at <= ?1 OR (status = 'delivered' AND delivered_at <= ?2))"
         ).map_err(|_| ApiError::internal())?;
         let rows = statement.query_map(params![now(), now() - 3600], |row| row.get::<_, String>(0))
             .map_err(|_| ApiError::internal())?;
@@ -337,6 +342,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         notifications,
         chunk_slots: Arc::new(Semaphore::new(3)),
         mutation_lock: Arc::new(AsyncMutex::new(())),
+            finalize_slots: Arc::new(Semaphore::new(2)),
         ws_slots: Arc::new(Semaphore::new(32)),
         download_slots: Arc::new(Semaphore::new(4)),
     };
@@ -377,7 +383,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/api/v1/outbox", get(api::outbox))
         .route("/api/v1/transfers/{id}", get(api::get_transfer))
         .route("/api/v1/transfers/{id}/chunks", get(api::chunk_status))
-        .route("/api/v1/transfers/{id}/chunks/{index}", put(api::put_chunk))
+        .route("/api/v1/transfers/{id}/chunks/{index}", put(api::put_chunk).delete(api::delete_chunk))
         .route("/api/v1/transfers/{id}/finish", post(api::finish_transfer))
         .route("/api/v1/transfers/{id}/download", get(api::download))
         .route("/api/v1/transfers/{id}/ack", post(api::ack))
@@ -437,9 +443,36 @@ mod tests {
         ).unwrap();
         assert_eq!(name, "Old PC");
         let version: i64 = migrated.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
-        assert_eq!(version, 3);
+        assert_eq!(version, 4);
         drop(migrated);
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn migrates_legacy_transfer_columns() {
+        let root = std::env::temp_dir().join(format!("synchro-legacy-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("old.sqlite3");
+        {
+            let db = Connection::open(&path).unwrap();
+            db.execute_batch("CREATE TABLE transfers (
+                id TEXT PRIMARY KEY, sender_id TEXT NOT NULL, recipient_id TEXT NOT NULL,
+                filename TEXT NOT NULL, size_bytes INTEGER NOT NULL, sha256 TEXT NOT NULL,
+                status TEXT NOT NULL, created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL
+            );").unwrap();
+        }
+        let db = init_db(&path).unwrap();
+        let columns = {
+            let mut stmt = db.prepare("PRAGMA table_info(transfers)").unwrap();
+            let names = stmt.query_map([], |r| r.get::<_, String>(1)).unwrap();
+            names.collect::<Result<Vec<_>, _>>().unwrap()
+        };
+        assert!(columns.iter().any(|n| n == "encrypted"));
+        assert!(columns.iter().any(|n| n == "delivered_at"));
+        let version: i64 = db.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
+        assert_eq!(version, 4);
+        drop(db);
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[tokio::test]
@@ -471,6 +504,7 @@ mod tests {
             notifications,
             chunk_slots: Arc::new(Semaphore::new(3)),
             mutation_lock: Arc::new(AsyncMutex::new(())),
+            finalize_slots: Arc::new(Semaphore::new(2)),
             ws_slots: Arc::new(Semaphore::new(32)),
             download_slots: Arc::new(Semaphore::new(4)),
         };
