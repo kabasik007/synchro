@@ -1,14 +1,15 @@
 //! Synchro desktop UI: real state, no placeholder devices or fake QR codes.
 use super::*;
 use egui::{Color32, RichText, Stroke};
+use crate::design as ds;
 
 fn c(r: u8, g: u8, b: u8) -> Color32 { Color32::from_rgb(r, g, b) }
-const BLUE: Color32 = Color32::from_rgb(40, 127, 255);
-const LIGHT: Color32 = Color32::from_rgb(235, 241, 255);
-const MUTED: Color32 = Color32::from_rgb(144, 165, 195);
-const PANEL_BG: Color32 = Color32::from_rgb(17, 27, 45);
-const PANEL_BORDER: Color32 = Color32::from_rgb(42, 63, 92);
-const GREEN: Color32 = Color32::from_rgb(46, 221, 122);
+const BLUE: Color32 = ds::BLUE;
+const LIGHT: Color32 = ds::TEXT;
+const MUTED: Color32 = ds::MUTED;
+const PANEL_BG: Color32 = ds::CARD;
+const PANEL_BORDER: Color32 = ds::BORDER;
+const GREEN: Color32 = ds::GREEN;
 
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub enum Page {
@@ -55,59 +56,86 @@ fn nav_button(ui: &mut egui::Ui, text: &str, selected: bool) -> bool {
     ui.add(button).clicked()
 }
 
-fn status_text(connection: &Connection) -> (&'static str, Color32) {
+fn status_text(connection: &Connection, internet: bool) -> (&'static str, Color32) {
     match connection {
+        Connection::Online(_) if internet => ("Relay підключено", GREEN),
         Connection::Online(_) => ("Android онлайн", GREEN),
-        Connection::Offline(_) => ("Немає зв'язку", c(249, 131, 107)),
+        Connection::Offline(_) => ("Немає зв'язку", ds::RED),
         Connection::Unknown => ("Не перевірено", MUTED),
     }
 }
 
 fn sidebar(ui: &mut egui::Ui, app: &mut SynchroApp) {
-    ui.add_space(22.0);
+    ui.add_space(16.0);
     ui.horizontal(|ui| {
-        ui.label(RichText::new("ϟ").size(44.0).color(BLUE).strong());
+        egui::Frame::new()
+            .fill(c(24, 55, 100))
+            .corner_radius(12)
+            .inner_margin(egui::Margin::symmetric(12, 7))
+            .show(ui, |ui| {
+                ui.label(RichText::new("ϟ").size(30.0).color(ds::PALE_BLUE).strong());
+            });
         ui.vertical(|ui| {
-            title(ui, "Synchro", 24.0);
-            caption(ui, "v0.3.1 · Rust + Android");
+            title(ui, "Synchro", 22.0);
+            caption(ui, "STUDIO  ·  v0.5");
         });
     });
-    ui.add_space(35.0);
+    ui.add_space(26.0);
+    ds::eyebrow(ui, "РОБОЧИЙ ПРОСТІР");
+    ui.add_space(10.0);
     if nav_button(ui, "➤   Передача", app.page == Page::Transfer) { app.page = Page::Transfer; }
     ui.add_space(5.0);
-    if nav_button(ui, "▣   Пристрій", app.page == Page::Devices) { app.page = Page::Devices; }
+    if nav_button(ui, "▣   Пристрої", app.page == Page::Devices) { app.page = Page::Devices; }
     ui.add_space(5.0);
     if nav_button(ui, "⚙   Налаштування", app.page == Page::Settings) { app.page = Page::Settings; }
     ui.add_space(5.0);
-    if nav_button(ui, "ⓘ   Про програму", app.page == Page::About) { app.page = Page::About; }
-    ui.add_space(45.0);
-    let (state, color) = status_text(&app.connection);
-    ui.horizontal(|ui| {
-        ui.label(RichText::new("●").color(color).size(17.0));
-        ui.label(RichText::new(state).color(MUTED).size(13.0));
-    });
+    if nav_button(ui, "ⓘ   Про Synchro", app.page == Page::About) { app.page = Page::About; }
+    ui.add_space(35.0);
+    ui.separator();
+    ui.add_space(12.0);
+    ds::eyebrow(ui, "З'ЄДНАННЯ");
+    ui.add_space(7.0);
+    let (state, color) = status_text(&app.connection, ds::is_internet(&app.settings.address));
+    ds::chip(ui, state, color);
+    ui.add_space(8.0);
+    caption(ui, ds::transport_name(&app.settings.address));
+    ui.add_space(12.0);
+    caption(ui, "Open source  ·  Windows / Android");
 }
 
 fn hero(ui: &mut egui::Ui, app: &SynchroApp) {
-    ui.horizontal(|ui| {
-        ui.vertical(|ui| {
-            title(ui, "Швидка передача файлів", 30.0);
-            ui.label(RichText::new("з ПК на Android").color(c(66, 153, 255)).size(29.0).strong());
-            ui.add_space(6.0);
-            caption(ui, "APK, ZIP, документи — напряму через Wi-Fi або Tailscale.");
+    egui::Frame::new()
+        .fill(ds::CARD_ALT)
+        .stroke(Stroke::new(1.0, ds::BORDER))
+        .corner_radius(18)
+        .inner_margin(22)
+        .show(ui, |ui| {
+            let wide = ui.available_width() >= 650.0;
+            ui.horizontal(|ui| {
+                ui.vertical(|ui| {
+                    ds::eyebrow(ui, "SYNCHRO  /  TRANSFER");
+                    ui.add_space(6.0);
+                    title(ui, "Швидка передача файлів", if wide { 29.0 } else { 25.0 });
+                    ui.label(RichText::new("з ПК на Android").color(ds::PALE_BLUE).size(27.0).strong());
+                    ui.add_space(7.0);
+                    caption(ui, "APK, ZIP і документи  ·  Wi-Fi, Tailscale або HTTPS");
+                });
+                if wide {
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ds::connection_art(ui);
+                    });
+                }
+            });
+            ui.add_space(18.0);
+            ui.horizontal_wrapped(|ui| {
+                let (label, color) = status_text(&app.connection, ds::is_internet(&app.settings.address));
+                ds::chip(ui, label, color);
+                ds::chip(ui, ds::transport_name(&app.settings.address), ds::BLUE);
+                if !app.files.is_empty() {
+                    ds::chip(ui, &format!("{} в черзі", app.files.len()), ds::ORANGE);
+                }
+            });
         });
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            ui.label(RichText::new("▣  →  ◈").color(BLUE).size(38.0));
-        });
-    });
-    ui.add_space(12.0);
-    let (state, color) = status_text(&app.connection);
-    ui.horizontal(|ui| {
-        ui.label(RichText::new("●").color(color).size(17.0));
-        ui.label(RichText::new(state).color(color).size(14.0).strong());
-        ui.separator();
-        caption(ui, "LAN/Tailscale або HTTPS Internet Mode");
-    });
 }
 
 fn device_card(ui: &mut egui::Ui, app: &mut SynchroApp) {
@@ -115,9 +143,10 @@ fn device_card(ui: &mut egui::Ui, app: &mut SynchroApp) {
         ui.horizontal(|ui| {
             let model = match &app.connection {
                 Connection::Online(info) => info.device.as_str(),
+                _ if ds::is_internet(&app.settings.address) => "Synchro Internet Relay",
                 _ => "Android",
             };
-            title(ui, format!("▣  {model}"), 19.0);
+            title(ui, format!("▣  {model}"), 17.0);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let label = if app.checking { "Перевіряємо…" } else { "↻ Перевірити" };
                 if ui.add_enabled(!app.checking, solid_button(label, false, 128.0)).clicked() {
@@ -128,7 +157,11 @@ fn device_card(ui: &mut egui::Ui, app: &mut SynchroApp) {
         if let Connection::Online(info) = &app.connection {
             ui.horizontal(|ui| {
                 ui.label(RichText::new("●  Готовий до передачі").color(GREEN).size(13.0));
-                caption(ui, format!("Android API {} · Synchro {}", info.sdk, info.app_version));
+                caption(ui, if ds::is_internet(&app.settings.address) {
+                    format!("HTTPS Internet Mode · Synchro {}", info.app_version)
+                } else {
+                    format!("Android API {} · Synchro {}", info.sdk, info.app_version)
+                });
             });
         }
         ui.add_space(7.0);
@@ -138,17 +171,17 @@ fn device_card(ui: &mut egui::Ui, app: &mut SynchroApp) {
             .hint_text("http://192.168.1.100:8765 або https://disk.sitezilla.net")
             .desired_width(address_width));
         ui.add_space(7.0);
-        caption(ui, if app.settings.address.starts_with("https://") { "Токен сервера (64 символи)" } else { "Код сполучення (32 символи)" });
+        caption(ui, if ds::is_internet(&app.settings.address) { "Токен сервера (64 символи)" } else { "Код сполучення (32 символи)" });
         ui.horizontal(|ui| {
             let token_width = (ui.available_width() - 90.0).max(120.0);
             ui.add(egui::TextEdit::singleline(&mut app.settings.token)
                 .password(!app.show_token).desired_width(token_width)
-                .hint_text("Встав код із Synchro Android"));
+                .hint_text(if ds::is_internet(&app.settings.address) { "64 символи із Synchro Disk" } else { "Код із Synchro Android" }));
             if ui.button(if app.show_token { "Сховати" } else { "Показати" }).clicked() {
                 app.show_token = !app.show_token;
             }
         });
-        if app.settings.address.trim().starts_with("https://") {
+        if ds::is_internet(&app.settings.address) {
             ui.add_space(7.0);
             caption(ui, "UUID пристрою-одержувача (з адмінпанелі сервера)");
             ui.add(egui::TextEdit::singleline(&mut app.settings.recipient_id)
@@ -160,35 +193,42 @@ fn device_card(ui: &mut egui::Ui, app: &mut SynchroApp) {
         ui.horizontal(|ui| {
             if ui.small_button("Зберегти").clicked() { app.persist_settings(); }
             if ui.small_button("Інструкція").clicked() { app.page = Page::Devices; }
-            if ui.small_button("Копіювати IP").clicked() { ui.ctx().copy_text(app.settings.address.clone()); }
+            if ui.small_button("Копіювати адресу").clicked() { ui.ctx().copy_text(app.settings.address.clone()); }
         });
         if let Connection::Offline(reason) = &app.connection {
             ui.add_space(5.0);
-            ui.label(RichText::new(reason).color(c(249, 131, 107)).size(12.0));
+            ui.label(RichText::new(reason).color(ds::RED).size(12.0));
         }
     });
 }
 
 fn drop_card(ui: &mut egui::Ui, app: &mut SynchroApp) {
-    card(ui, |ui| {
-        ui.vertical_centered(|ui| {
-            ui.add_space(9.0);
-            ui.label(RichText::new("⇧").color(BLUE).size(45.0));
-            title(ui, "Перетягни файли сюди", 20.0);
-            caption(ui, "APK, ZIP та будь-які інші файли · до 2 ГіБ на файл");
-            ui.add_space(12.0);
-            if ui.add(solid_button("▱  Вибрати файли", false, 174.0)).clicked() {
-                app.choose_files();
-            }
-            ui.add_space(8.0);
+    egui::Frame::new()
+        .fill(c(16, 38, 69))
+        .stroke(Stroke::new(1.2, ds::BLUE.gamma_multiply(0.6)))
+        .corner_radius(16)
+        .inner_margin(19)
+        .show(ui, |ui| {
+            ui.vertical_centered(|ui| {
+                ui.add_space(7.0);
+                ui.label(RichText::new("⇧").color(ds::PALE_BLUE).size(46.0));
+                title(ui, "Перетягни файли сюди", 18.0);
+                ui.add_space(3.0);
+                caption(ui, "APK · ZIP · будь-який файл до 2 ГіБ");
+                ui.add_space(11.0);
+                if ui.add(solid_button("▱  Вибрати файли", true, 174.0)).clicked() {
+                    app.choose_files();
+                }
+                ui.add_space(7.0);
+                caption(ui, "Або перетягни файли у вікно Synchro");
+            });
         });
-    });
 }
 
 fn queue_card(ui: &mut egui::Ui, app: &mut SynchroApp) {
     card(ui, |ui| {
         ui.horizontal(|ui| {
-            title(ui, format!("Черга файлів  ·  {}", app.files.len()), 17.0);
+            title(ui, format!("Черга передавання  ·  {}", app.files.len()), 17.0);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui.add_enabled(!app.busy && !app.files.is_empty(),
                     egui::Button::new("Очистити").frame(false)).clicked() {
@@ -198,7 +238,7 @@ fn queue_card(ui: &mut egui::Ui, app: &mut SynchroApp) {
         });
         ui.add_space(4.0);
         if app.files.is_empty() {
-            caption(ui, "Черга порожня");
+            ui.label(RichText::new("Усе готово до нового передавання").color(LIGHT).size(13.0));
             caption(ui, "Перетягни APK у вікно або натисни «Вибрати файли».");
             ui.add_space(8.0);
         } else {
@@ -216,7 +256,7 @@ fn queue_card(ui: &mut egui::Ui, app: &mut SynchroApp) {
                             caption(ui, file_size(bytes));
                             if app.current_path.as_ref() == Some(file) {
                                 ui.add(egui::ProgressBar::new(app.progress)
-                                    .fill(BLUE).desired_width(135.0).show_percentage());
+                                    .fill(BLUE).desired_width(190.0).show_percentage());
                             }
                         });
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -248,14 +288,21 @@ fn transfer(ui: &mut egui::Ui, app: &mut SynchroApp) {
             card(&mut cols[1], |ui| {
                 title(ui, "Підключення", 19.0);
                 ui.add_space(9.0);
-                caption(ui, "1  Відкрий Synchro на Android");
-                caption(ui, "2  Натисни «Start receiving»");
-                caption(ui, "3  Встав IP-адресу й код з телефона");
-                caption(ui, "4  Перевір з'єднання та відправ APK");
+                if ds::is_internet(&app.settings.address) {
+                    caption(ui, "1  Встанови Synchro Internet Relay на сервері");
+                    caption(ui, "2  Додай Windows та Android в адмінпанелі");
+                    caption(ui, "3  Введи HTTPS, токен Windows та UUID Android");
+                    caption(ui, "4  Перевір підключення й надішли файл");
+                } else {
+                    caption(ui, "1  Відкрий Synchro на Android");
+                    caption(ui, "2  Натисни «Start receiving»");
+                    caption(ui, "3  Встав IP-адресу й код з телефона");
+                    caption(ui, "4  Перевір з'єднання та відправ APK");
+                }
                 ui.add_space(6.0);
-                caption(ui, "Папка: Download/Synchro/Debug");
+                caption(ui, if ds::is_internet(&app.settings.address) { "Файли надходять у Relay Inbox Android" } else { "Папка: Download/Synchro/Debug" });
                 ui.add_space(6.0);
-                ui.label(RichText::new("QR-сполучення · у розробці").color(MUTED).size(12.0));
+                ui.label(RichText::new("QR-сполучення  ·  планується").color(MUTED).size(12.0));
             });
         });
     } else {
@@ -318,7 +365,11 @@ fn transfer(ui: &mut egui::Ui, app: &mut SynchroApp) {
     ui.add_space(6.0);
     caption(ui, format!("Статус: {}", app.status));
     ui.add_space(4.0);
-    caption(ui, "APK встановлюється тільки після підтвердження Android.");
+    caption(ui, if ds::is_internet(&app.settings.address) {
+        "Internet Mode: сервер зберігає файл для одержувача; Windows E2EE ще не підтримується."
+    } else {
+        "APK встановлюється тільки після підтвердження Android."
+    });
 }
 
 fn devices(ui: &mut egui::Ui, app: &mut SynchroApp) {
@@ -404,28 +455,29 @@ fn about(ui: &mut egui::Ui) {
 pub fn configure_theme(ctx: &egui::Context) {
     ctx.set_theme(egui::Theme::Dark);
     let mut visuals = egui::Visuals::dark();
-    visuals.panel_fill = c(10, 18, 34);
+    visuals.panel_fill = ds::BACKGROUND;
     visuals.selection.bg_fill = BLUE.gamma_multiply(0.55);
-    visuals.window_fill = c(10, 18, 34);
-    visuals.extreme_bg_color = c(12, 21, 38);
-    visuals.widgets.inactive.bg_fill = c(28, 41, 64);
-    visuals.widgets.hovered.bg_fill = c(42, 69, 107);
+    visuals.window_fill = ds::BACKGROUND;
+    visuals.extreme_bg_color = c(12, 24, 42);
+    visuals.widgets.inactive.bg_fill = c(30, 49, 76);
+    visuals.widgets.hovered.bg_fill = c(51, 81, 122);
     visuals.widgets.active.bg_fill = BLUE;
     visuals.widgets.noninteractive.fg_stroke.color = MUTED;
     ctx.set_visuals(visuals);
     ctx.global_style_mut(|style| {
         style.spacing.item_spacing = egui::vec2(9.0, 9.0);
-        style.spacing.button_padding = egui::vec2(11.0, 7.0);
+        style.spacing.button_padding = egui::vec2(12.0, 8.0);
+        style.spacing.interact_size.y = 35.0;
     });
 }
 
 pub fn render(ui: &mut egui::Ui, app: &mut SynchroApp) {
     egui::Panel::left("synchro-sidebar").exact_size(229.0).resizable(false)
-        .frame(egui::Frame::new().fill(c(11, 19, 34)).inner_margin(20)
+        .frame(egui::Frame::new().fill(ds::SIDEBAR).inner_margin(20)
             .stroke(Stroke::new(1.0, PANEL_BORDER)))
         .show(ui, |ui| sidebar(ui, app));
     egui::CentralPanel::default()
-        .frame(egui::Frame::new().fill(c(10, 18, 34)).inner_margin(24))
+        .frame(egui::Frame::new().fill(ds::BACKGROUND).inner_margin(24))
         .show(ui, |ui| {
             egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
                 match app.page {
