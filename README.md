@@ -22,6 +22,19 @@ Synchro is an experimental open-source PC-to-phone file transfer utility. The Wi
 
 > The picture is a design target (mockup), not a screenshot of currently implemented features. Only show live connection status, transfer progress and device details after verifying real data.
 
+## Synchro v0.4.1 — aaPanel browser installer
+
+**[Installation wizard, deployment steps and domain change](docs/INSTALL-AAPANEL-0.4.1.md)** · **[Security and bug audit](docs/AUDIT-INTERNET-0.4.1.md)**
+
+- Designed for any HTTPS domain, e.g. \`disk.sitezilla.net\` or \`cloud.example.net\`. Nginx CSP and browser URLs are no longer tied to a specific hostname.
+- New responsive four-step installer at \`https://YOUR-DOMAIN/install/\`: verifies HTTPS/API, checks SQLite/filesystem, creates initial Windows and Android device tokens and permanently locks first-time setup.
+- SQLite is auto-created by Rust; no aaPanel MySQL/MariaDB database is needed for this single-owner MVP.
+- **deploy/bootstrap-aapanel.sh** places the already compiled Rust server under systemd and copies public web files into the existing aaPanel website. Root/admin privileges are needed once for the OS/service/Nginx setup — never granted to the browser.
+- Admin can subsequently update the advertised domain from the Synchro Disk website; DNS/SSL/Nginx must be changed in aaPanel/Cloudflare separately.
+- Hardened chunk upload concurrency, quota reservations reflecting temporary double disk usage, real available-space check and retryable file cleanup.
+
+**Deployment is not automatic and has not been executed on your VPS.** Rust compilation and real HTTPS/transfer testing are still required. Native Windows/Android apps do not yet use the Internet Mode relay.
+
 ## Synchro v0.4 — Internet Mode (server + web MVP)
 
 **[Deployment guide: disk.sitezilla.net and aaPanel](docs/INTERNET-MODE-0.4.md)**
