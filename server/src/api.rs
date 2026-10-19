@@ -183,6 +183,15 @@ pub(crate) async fn create_transfer(
     if recipient == sender.id {
         return Err(ApiError::bad("Sender and recipient cannot be identical"));
     }
+    // During assembly both uploaded chunks and final object exist concurrently.
+    // Reserve twice the logical size and leave 128 MiB for SQLite/system overhead.
+    let reserve_bytes = payload.size_bytes * 2;
+    let available = fs2::available_space(&state.config.storage)
+        .map_err(|_| ApiError::internal())?;
+    if available < (reserve_bytes as u64).saturating_add(128 * 1024 * 1024) {
+        return Err(ApiError(StatusCode::INSUFFICIENT_STORAGE,
+            "Not enough free disk space for chunk assembly; free space or lower file size".into()));
+    }
     let id = uuid::Uuid::new_v4().to_string();
     let created = now();
     let expires = created + state.config.ttl_hours * 3600;
@@ -195,11 +204,14 @@ pub(crate) async fn create_transfer(
         ).map_err(|_| ApiError::internal())?;
         if !exists { return Err(ApiError::not_found()); }
         let reserved: i64 = db.query_row(
-            "SELECT COALESCE(SUM(size_bytes),0) FROM transfers
+            "SELECT COALESCE(SUM(
+                 CASE WHEN status IN ('uploading','finalizing') THEN 2*size_bytes
+                      ELSE size_bytes END),0)
+             FROM transfers
              WHERE status IN ('uploading','finalizing','ready') AND expires_at > ?1",
             [created], |r| r.get(0),
         ).map_err(|_| ApiError::internal())?;
-        if reserved > state.config.storage_quota - payload.size_bytes {
+        if reserved > state.config.storage_quota - reserve_bytes {
             return Err(ApiError(StatusCode::INSUFFICIENT_STORAGE,
                 "Server storage quota exhausted; acknowledge or prune older files".into()));
         }
