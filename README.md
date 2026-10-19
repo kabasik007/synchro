@@ -22,6 +22,8 @@ Synchro is an experimental open-source PC-to-phone file transfer utility. The Wi
 
 > The picture is a design target (mockup), not a screenshot of currently implemented features. Only show live connection status, transfer progress and device details after verifying real data.
 
+> **Security gate (2026-10-19):** The [independent v0.4.1 security audit](docs/SECURITY-AUDIT-0.4.1-2026-10-19.md) identifies high-priority upload/prune races, an unsafe root-bootstrap symlink overwrite scenario, missing DoS limits and unauthenticated-in-the-cryptographic-sense delivery acknowledgement. **Do not expose this MVP as a publicly trusted file service until these findings are remediated and integration tests pass.** The browser relay is not end-to-end encrypted.
+
 ## Synchro v0.4.1 — aaPanel browser installer
 
 **[Installation wizard, deployment steps and domain change](docs/INSTALL-AAPANEL-0.4.1.md)** · **[Security and bug audit](docs/AUDIT-INTERNET-0.4.1.md)**
