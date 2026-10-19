@@ -23,7 +23,8 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use subtle::ConstantTimeEq;
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, Semaphore};
+use tower_http::limit::RequestBodyLimitLayer;
 use tracing::{error, info};
 
 pub(crate) const CHUNK_BYTES: usize = 8 * 1024 * 1024;
@@ -43,6 +44,7 @@ pub(crate) struct State {
     pub db: Arc<Mutex<Connection>>,
     pub config: Arc<Config>,
     pub notifications: broadcast::Sender<Signal>,
+    pub chunk_slots: Arc<Semaphore>,
 }
 
 #[derive(Clone, Serialize)]
@@ -273,6 +275,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         db: Arc::new(Mutex::new(db)),
         config: Arc::new(Config { storage, admin_token, storage_quota, ttl_hours }),
         notifications,
+        chunk_slots: Arc::new(Semaphore::new(3)),
     };
     // Periodic cleanup; no direct public admin access required.
     let cleaning = state.clone();
@@ -304,6 +307,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/api/v1/transfers/{id}/ack", post(api::ack))
         .route("/api/v1/inbox", get(api::inbox))
         .route("/ws", get(websocket::connect))
+        // Bounds oversized chunk requests before their bodies reach any handler.
+        .layer(RequestBodyLimitLayer::new(CHUNK_BYTES + 64 * 1024))
         .with_state(state);
     let listener = tokio::net::TcpListener::bind(bind).await?;
     info!("Synchro Internet Mode listening on {}", bind);
