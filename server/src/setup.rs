@@ -194,6 +194,37 @@ pub(crate) async fn finish(
     })))
 }
 
+/// Update only the public display URL. DNS, TLS and Nginx still belong to aaPanel;
+/// this intentionally cannot change the filesystem or proxy from a browser.
+#[derive(Deserialize)]
+pub(crate) struct UpdateOriginRequest { pub public_url: String }
+
+pub(crate) async fn update_origin(
+    AxumState(state): AxumState<State>,
+    headers: HeaderMap,
+    Json(input): Json<UpdateOriginRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    verify_admin(&headers, &state)?;
+    let origin = valid_origin(&input.public_url)?;
+    let db = state.db.lock().map_err(|_| ApiError::internal())?;
+    let installed: Option<String> = db.query_row(
+        "SELECT value FROM system_settings WHERE key='installed'",
+        [], |r| r.get(0),
+    ).optional().map_err(|_| ApiError::internal())?;
+    if installed.as_deref() != Some("1") {
+        return Err(ApiError::conflict("Complete setup before changing the public URL"));
+    }
+    db.execute(
+        "INSERT INTO system_settings(key,value) VALUES('public_url',?1)
+         ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+        [&origin],
+    ).map_err(|_| ApiError::internal())?;
+    Ok(Json(serde_json::json!({
+        "public_url": origin,
+        "note": "Update DNS, HTTPS certificate and aaPanel Nginx separately"
+    })))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
