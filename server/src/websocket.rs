@@ -31,7 +31,7 @@ async fn serve(mut socket: WebSocket, state: State) {
         Ok(Some(Ok(Message::Text(body)))) => body,
         _ => return,
     };
-    let Ok(handshake) = serde_json::from_str::<Handshake>(&first) else { return };
+    let Ok(handshake) = serde_json::from_str::<Handshake>(first.as_str()) else { return };
     if handshake.message_type != "auth" { return; }
 
     let mut headers = HeaderMap::new();
@@ -60,6 +60,7 @@ async fn serve(mut socket: WebSocket, state: State) {
                         if socket.send(Message::Text(payload.into())).await.is_err() {
                             break;
                         }
+                        if signal.event_type == "device_revoked" { break; }
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                     _ => {}
