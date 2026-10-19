@@ -17,7 +17,7 @@ mod watch;
 
 const MAX_SIZE: u64 = 2 * 1024 * 1024 * 1024;
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 struct Settings {
     address: String,
     token: String,
@@ -295,14 +295,19 @@ struct SynchroApp {
     history: Vec<SentItem>,
     current_path: Option<PathBuf>,
     watcher: watch::FolderWatch,
+    applied_watch_enabled: bool,
+    applied_watch_folder: String,
     last_check: Instant,
 }
 
 impl Default for SynchroApp {
     fn default() -> Self {
         let (tx, rx) = mpsc::channel();
+        let settings = load_settings();
         Self {
-            settings: load_settings(), files: load_queue(), manual_path: String::new(),
+            applied_watch_enabled: settings.watch_enabled,
+            applied_watch_folder: settings.watch_folder.clone(),
+            settings, files: load_queue(), manual_path: String::new(),
             status: "Pair Android, then drop APK/ZIP files here".into(),
             progress: 0.0, busy: false, tx, rx,
             page: ui::Page::default(), connection: ui::Connection::default(),
@@ -325,7 +330,12 @@ impl SynchroApp {
     }
     fn persist_settings(&mut self) {
         match save_settings(&self.settings) {
-            Ok(()) => self.status = "Налаштування збережено.".into(),
+            Ok(()) => {
+                self.applied_watch_enabled = self.settings.watch_enabled;
+                self.applied_watch_folder = self.settings.watch_folder.clone();
+                self.sync_watcher();
+                self.status = "Налаштування збережено.".into();
+            },
             Err(e) => self.status = format!("Не вдалося зберегти налаштування: {e}"),
         }
     }
@@ -373,8 +383,8 @@ impl SynchroApp {
 
     fn sync_watcher(&mut self) {
         self.watcher.configure(
-            self.settings.watch_enabled,
-            &self.settings.watch_folder,
+            self.applied_watch_enabled,
+            &self.applied_watch_folder,
             self.tx.clone(),
         );
     }
@@ -425,6 +435,11 @@ impl eframe::App for SynchroApp {
                     self.busy = false;
                     self.current_path = None;
                     continue_queue = result.is_ok() && self.settings.auto_send;
+                    if result.is_err() {
+                        // Re-probe after a failed transfer instead of presenting stale Online.
+                        self.last_check = Instant::now() - Duration::from_secs(30);
+                        self.connection = ui::Connection::Unknown;
+                    }
                     self.status = result.unwrap_or_else(|e| format!("Помилка передачі: {e}"));
                 }
                 Event::FileSent(path) => {
@@ -437,7 +452,6 @@ impl eframe::App for SynchroApp {
                 }
                 Event::FolderPicked(folder) => {
                     self.settings.watch_folder = folder.to_string_lossy().into_owned();
-                    self.sync_watcher();
                     self.persist_settings();
                 }
                 Event::WatchFile(path) => {
