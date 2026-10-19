@@ -131,7 +131,7 @@ pub(crate) fn verify_device(headers: &HeaderMap, state: &State) -> Result<Device
     let hash = hash_token(token);
     let conn = state.db.lock().map_err(|_| ApiError::internal())?;
     conn.query_row(
-        "SELECT id, name FROM devices WHERE token_sha256 = ?1",
+        "SELECT id, name FROM devices WHERE token_sha256 = ?1 AND revoked = 0",
         [hash],
         |row| Ok(Device { id: row.get(0)?, name: row.get(1)? }),
     )
@@ -168,7 +168,8 @@ fn init_db(path: &Path) -> Result<Connection, Box<dyn std::error::Error>> {
              id TEXT PRIMARY KEY,
              name TEXT NOT NULL,
              token_sha256 TEXT NOT NULL UNIQUE,
-             created_at INTEGER NOT NULL
+             created_at INTEGER NOT NULL,
+             revoked INTEGER NOT NULL DEFAULT 0
          );
          CREATE TABLE IF NOT EXISTS transfers (
              id TEXT PRIMARY KEY,
@@ -231,8 +232,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let admin_token = env::var("SYNCHRO_ADMIN_TOKEN")
         .map_err(|_| "Set SYNCHRO_ADMIN_TOKEN to a cryptographically random secret (at least 32 characters)")?;
-    if admin_token.len() < 32 || admin_token.len() > 128 || admin_token.chars().any(char::is_whitespace) {
-        return Err("SYNCHRO_ADMIN_TOKEN must be 32-128 characters without whitespace".into());
+    if admin_token.len() != 64 || !admin_token.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err("SYNCHRO_ADMIN_TOKEN must be 64 random hexadecimal characters (openssl rand -hex 32)".into());
     }
     let storage = PathBuf::from(env::var("SYNCHRO_STORAGE_DIR")
         .unwrap_or_else(|_| "/var/lib/synchro/files".to_string()));
@@ -281,6 +282,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app = Router::new()
         .route("/health", get(|| async { Json(json!({"status":"ok","version":"0.4.0"})) }))
         .route("/api/v1/admin/devices", post(api::register_device))
+        .route("/api/v1/admin/devices/{id}/revoke", post(api::revoke_device))
         .route("/api/v1/admin/prune", post(api::prune))
         .route("/api/v1/me", get(api::me))
         .route("/api/v1/devices", get(api::devices))
