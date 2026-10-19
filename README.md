@@ -11,8 +11,11 @@ Experimental, user-selected transfer: Windows watches a folder for new files
 selects photos/videos folders via the system picker and schedules uploads over
 unmetered Wi-Fi; Windows saves verified files from Relay to a selected folder.
 
-This is not yet a permanent encrypted photo backup: files expire on Relay
-(usually 72 hours), native uploads are not E2EE, and no subfolders are scanned.
+This is an experimental encrypted Android → Windows photo backup. Content is
+AES-256-GCM encrypted before reaching Relay, but **filenames and sizes remain
+visible** to the server, and transfers still expire there (usually 72 hours).
+It is not a permanent archive. The two devices must share a 256-bit key,
+and no subfolders are scanned.
 See [setup, limitations and tests](docs/FOLDER-SYNC-PREVIEW.md).
 
 ## One-command Windows test build

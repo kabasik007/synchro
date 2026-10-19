@@ -31,3 +31,8 @@ dependencies {
     implementation("androidx.work:work-runtime:2.10.2")
     implementation("androidx.documentfile:documentfile:1.0.1")
 }
+
+// Cross-platform AES-GCM backup envelope golden-vector test.
+dependencies {
+    testImplementation("junit:junit:4.13.2")
+}

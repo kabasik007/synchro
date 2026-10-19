@@ -499,7 +499,7 @@ fn settings_page(ui: &mut egui::Ui, app: &mut SynchroApp) {
 
 fn about(ui: &mut egui::Ui) {
     title(ui, "Synchro", 32.0);
-    caption(ui, "v0.5.1 · Open source · MIT");
+    caption(ui, "v0.6.0 preview · Open source · MIT");
     ui.add_space(18.0);
     card(ui, |ui| {
         title(ui, "Швидше, ніж пересилати через месенджер", 18.0);

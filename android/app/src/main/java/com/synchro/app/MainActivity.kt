@@ -271,7 +271,7 @@ class MainActivity : Activity() {
 
     private fun backupCard(parent: LinearLayout) {
         val card = panel(parent, Color.WHITE, border)
-        label(card, "☁ ANDROID → ПК · BACKUP", 17f, ink, true)
+        label(card, "☁ ANDROID → ПК · E2EE BACKUP", 17f, ink, true)
         gap(card, 8)
         label(card, "Вибери до 5 папок: DCIM/Camera, Pictures, Movies тощо. Підпапки не скануються.", 12f, muted)
         val prefs = getSharedPreferences("folder_backup", MODE_PRIVATE)

@@ -2,8 +2,10 @@
 
 Synchro supports opt-in transfers in both directions. No mirroring, background
 deletions or recursive folder access. The relay is an intermediary, not a
-permanent archive (transfer expiration defaults to 72 hours). Native phone
-backup is HTTPS transport and is NOT end-to-end encrypted.
+permanent archive (transfer expiration defaults to 72 hours). Android → Windows
+backup encrypts file contents with AES-256-GCM before HTTPS upload. The server
+still sees metadata (filenames and sizes). Windows → Android and ordinary LAN
+file transfer are still NOT end-to-end encrypted.
 
 ## PC → Android: send a chosen folder
 
@@ -26,24 +28,34 @@ backup is HTTPS transport and is NOT end-to-end encrypted.
 2. On Android, use the system folder picker under ANDROID → PC · BACKUP.
    Select up to five specific folders, such as DCIM/Camera or Movies.
    Only direct files in those directories are scanned; no subfolders.
-3. Enter Relay HTTPS origin, Android's device bearer token and the recipient
-   Windows device UUID. Explicitly confirm the privacy warning: native Android
-   uploads are NOT E2EE, and the server can read file contents.
+3. In Synchro Windows → Settings → Android → PC Backup, click Generate key.
+   Copy the 64-character secret into a password manager, then paste it into
+   the E2EE key field in Android → Backup. Android wraps it with a hardware/
+   OS-backed Android Keystore key; Windows holds it in memory for this session
+   only. NEVER lose the recovery key. Enter Relay HTTPS origin, Android's device
+   bearer token and recipient Windows UUID. The server sees names and sizes,
+   but the file content is encrypted BEFORE upload.
 4. Start a one-time backup or opt in to Wi-Fi/unmetered WorkManager scheduling
    (nominally every 15 minutes). Android may defer tasks.
 5. In Synchro Windows Settings, select an existing trusted local backup folder.
    Click Receive files or enable polling every ~60 seconds while the desktop
    application remains open. The PC must download before relay expiration.
-6. Windows streams downloaded files to temporary files, verifies SHA-256,
-   publishes without overwriting existing files, and only then ACKs Relay.
-   The Android worker checks for delivery ACK on a later pass.
+6. Enter the same recovery key in the Windows Backup panel each time you
+   restart Synchro. Windows streams encrypted downloads, validates SHA-256
+   and AES-GCM authentication, writes decrypted files to a temporary file,
+   publishes without overwriting, then ACKs Relay. Android checks the ACK
+   on a later run.
 
 ## Security, retention and limitations
 
 - This is a preview, not a guaranteed archival solution. Default retention:
   72h; server storage quota applies. Keep the PC running to receive in time.
-- The native Windows receiver skips encrypted (E2EE) transfers. Native E2EE
-  for automatic Android → Windows backups is a future security milestone.
+- Windows decrypts only the SYNBKP01 backup envelope (1 MiB authenticated
+  records, per-file random salt and nonce prefix), NOT the browser SYNCHRO1
+  format. Losing the 64-hex master backup key permanently prevents recovery.
+- Native Windows → Android sender is still HTTPS only (no E2EE).
+- Files are NOT encrypted at rest on Windows after decryption. Protect the
+  selected backup directory with full-disk encryption and access controls.
 - Folder paths are NOT preserved: flat filenames have a source-folder prefix.
 - Android reads at most 200 direct file entries per selected folder per run (round-robin pagination),
   up to five selected folders, file size up to 2GiB (excluding empty files).
@@ -58,7 +70,8 @@ backup is HTTPS transport and is NOT end-to-end encrypted.
 
 ## Test checklist before relying on this
 
-1. Verify both parts compile in GitHub Actions and local Windows APK/EXE build.
+1. Verify both parts compile in GitHub Actions, including the shared AES-GCM
+   golden vector tests, and then build the Windows EXE/Android APK locally.
 2. Select Android test folders with harmless JPG, MP4 and nested folders.
    Confirm direct files upload and nested files do not.
 3. Have Windows poll the Relay and confirm SHA-256 before ACK.

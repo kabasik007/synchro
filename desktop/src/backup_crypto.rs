@@ -136,6 +136,15 @@ mod tests {
         assert_eq!(result.ciphertext_sha256,format!("{:x}",Sha256::digest(&cipher)));
     }
     #[test]
+    fn android_java_ciphertext_matches_golden_sha256() {
+        let key="ab".repeat(32);
+        let wire=encrypted(b"Synchro cross-platform test",&key);
+        assert_eq!(
+            format!("{:x}", Sha256::digest(&wire)),
+            "38173b51c9a6e35acd41459469e4f15ba31e4c0bcba033a5c93108f77d55d578"
+        );
+    }
+    #[test]
     fn rejects_tamper_wrong_key_and_unknown_format() {
         let key="ad".repeat(32);
         let mut cipher=encrypted(b"private photo",&key);

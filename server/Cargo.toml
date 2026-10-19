@@ -1,6 +1,6 @@
 [package]
 name = "synchro-server"
-version = "0.5.1"
+version = "0.6.0"
 edition = "2021"
 description = "Synchro Internet Mode - owner-controlled relay for Windows and Android"
 license = "MIT"

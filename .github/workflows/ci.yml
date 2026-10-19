@@ -68,7 +68,7 @@ jobs:
         working-directory: android
         run: |
           chmod +x gradlew
-          ./gradlew :app:assembleDebug --no-daemon
+          ./gradlew :app:assembleDebug :app:testDebugUnitTest --no-daemon
       - name: Publish Android debug APK
         uses: actions/upload-artifact@v4
         with:
