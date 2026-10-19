@@ -4,6 +4,17 @@
 
 Security boundary: **browser ↔ browser and browser → Android may use E2EE with a separately exchanged key**. The native Windows Internet sender is not encrypted end-to-end yet (only HTTPS/TLS). This milestone is not production approved. See [v0.5 release/testing notes](docs/RELEASE-0.5.0.md).
 
+## Folder Sync preview · Android ↔ Windows
+
+Experimental, user-selected transfer: Windows watches a folder for new files
+(with optional all-file-type support) and can queue existing files; Android
+selects photos/videos folders via the system picker and schedules uploads over
+unmetered Wi-Fi; Windows saves verified files from Relay to a selected folder.
+
+This is not yet a permanent encrypted photo backup: files expire on Relay
+(usually 72 hours), native uploads are not E2EE, and no subfolders are scanned.
+See [setup, limitations and tests](docs/FOLDER-SYNC-PREVIEW.md).
+
 ## One-command Windows test build
 
 Paste into Windows PowerShell from any directory:
