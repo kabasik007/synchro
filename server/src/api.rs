@@ -241,7 +241,7 @@ pub(crate) async fn put_chunk(
     let path = chunk_path(&state.config.storage, &id, index);
     if fs::try_exists(&path).await.map_err(|_| ApiError::internal())? {
         let previous = fs::read(&path).await.map_err(|_| ApiError::internal())?;
-        return if previous == bytes {
+        return if previous.as_slice() == bytes.as_ref() {
             Ok(StatusCode::OK) // idempotent retry
         } else {
             Err(ApiError::conflict("Chunk already uploaded with different content"))
@@ -259,7 +259,7 @@ pub(crate) async fn put_chunk(
             Ok(()) => Ok(StatusCode::CREATED),
             Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
                 let previous = fs::read(&path).await.map_err(|_| ApiError::internal())?;
-                if previous == bytes {
+                if previous.as_slice() == bytes.as_ref() {
                     Ok(StatusCode::OK)
                 } else {
                     Err(ApiError::conflict("Chunk already uploaded with different content"))
@@ -373,6 +373,41 @@ pub(crate) async fn inbox(
     })).map_err(|_| ApiError::internal())?;
     let found = rows.collect::<Result<Vec<_>, _>>().map_err(|_| ApiError::internal())?;
     Ok(Json(found))
+}
+
+pub(crate) async fn get_transfer(
+    AxumState(state): AxumState<State>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+) -> Result<Json<TransferInfo>, ApiError> {
+    let device = verify_device(&headers, &state)?;
+    let id = safe_id(&id)?;
+    let found = find_transfer(&state, &id)?;
+    if (found.sender_id != device.id && found.recipient_id != device.id)
+        || found.expires_at <= now()
+    {
+        return Err(ApiError::not_found());
+    }
+    Ok(Json(found))
+}
+
+pub(crate) async fn outbox(
+    AxumState(state): AxumState<State>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<TransferInfo>>, ApiError> {
+    let device = verify_device(&headers, &state)?;
+    let db = state.db.lock().map_err(|_| ApiError::internal())?;
+    let mut statement = db.prepare(
+        "SELECT id,sender_id,recipient_id,filename,size_bytes,sha256,status,created_at,expires_at
+         FROM transfers WHERE sender_id=?1 AND expires_at>?2
+         ORDER BY created_at DESC LIMIT 100"
+    ).map_err(|_| ApiError::internal())?;
+    let rows = statement.query_map(params![device.id, now()], |r| Ok(TransferInfo {
+        id: r.get(0)?, sender_id: r.get(1)?, recipient_id: r.get(2)?,
+        filename: r.get(3)?, size_bytes: r.get(4)?, sha256: r.get(5)?,
+        status: r.get(6)?, created_at: r.get(7)?, expires_at: r.get(8)?,
+    })).map_err(|_| ApiError::internal())?;
+    Ok(Json(rows.collect::<Result<Vec<_>, _>>().map_err(|_| ApiError::internal())?))
 }
 
 pub(crate) async fn download(
