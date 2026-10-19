@@ -67,16 +67,20 @@ fi
 
 install -m 0644 "$SCRIPT_DIR/synchro-server.service" "$UNIT"
 systemctl daemon-reload
-systemctl enable --now synchro-server
+systemctl enable synchro-server
+systemctl restart synchro-server
 
-# Only serve the static web client and wizard; no private files inside wwwroot.
-cp -r "$REPO/web/." "$WEBROOT/"
-find "$WEBROOT" -type f \( -name '*.html' -o -name '*.js' -o -name '*.css' \) -exec chmod 0644 {} +
+# SECURITY: Never copy web files to an aaPanel-writable webroot as root.
+# A compromised site user could place symlinks at target paths and redirect
+# root's writes outside the site. Static deployment is a separate unprivileged step.
+echo "Static web files were NOT copied by the root bootstrap."
+echo "Use aaPanel File Manager, or run as the site owner (often www):"
+echo "  sudo -u www bash $REPO/deploy/publish-web.sh $DOMAIN"
 
 echo "Synchro prepared. Next:"
-echo "  1. Merge deploy/nginx-synchro.conf into the aaPanel HTTPS Nginx vhost for $DOMAIN."
-echo "  2. Run: nginx -t && systemctl reload nginx"
-echo "  3. Test: curl -fsS http://127.0.0.1:8787/health"
-echo "  4. Open https://$DOMAIN/install/"
-echo "  5. Privately read the admin secret from $ENVFILE."
+echo "  1. Publish static web files using the aaPanel site user (never root)."\necho "  2. Merge deploy/nginx-synchro.conf into the HTTPS vhost for $DOMAIN."
+echo "  3. Run: nginx -t && systemctl reload nginx"
+echo "  4. Test: curl -fsS http://127.0.0.1:8787/health"
+echo "  5. Open https://$DOMAIN/install/"
+echo "  6. Privately read the admin secret from $ENVFILE."
 echo "Nginx unchanged; Rust is bound to 127.0.0.1 only."
