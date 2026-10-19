@@ -8,6 +8,8 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.ContentUris
 import android.content.Intent
+import android.widget.CheckBox
+import androidx.documentfile.provider.DocumentFile
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.Typeface
@@ -108,6 +110,8 @@ class MainActivity : Activity() {
         controls(content)
         gap(content, 14)
         internetCard(content)
+        gap(content, 12)
+        backupCard(content)
         gap(content, 18)
         historyCard(content)
         gap(content, 16)
@@ -263,6 +267,88 @@ class MainActivity : Activity() {
             }.start()
         }
         card.addView(run, LinearLayout.LayoutParams(-1, -2))
+    }
+
+    private fun backupCard(parent: LinearLayout) {
+        val card = panel(parent, Color.WHITE, border)
+        label(card, "☁ ANDROID → ПК · BACKUP", 17f, ink, true)
+        gap(card, 8)
+        label(card, "Вибери до 5 папок: DCIM/Camera, Pictures, Movies тощо. Підпапки не скануються.", 12f, muted)
+        val prefs = getSharedPreferences("folder_backup", MODE_PRIVATE)
+        val folderRow = horizontal(card)
+        val names = FolderBackup.folders(this).map { uri ->
+            DocumentFile.fromTreeUri(this, uri)?.name ?: uri.lastPathSegment.orEmpty()
+        }
+        label(folderRow, if (names.isEmpty()) "Папки не вибрані" else names.joinToString(", "), 12f, blue)
+            .layoutParams = LinearLayout.LayoutParams(0, -2, 1f)
+        folderRow.addView(button("+ Папка", false, true) {
+            startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
+            }, 9021)
+        })
+        gap(card, 8)
+        card.addView(button("Очистити папки й зупинити", false) {
+            FolderBackup.stop(this, true)
+            recreate()
+        }, LinearLayout.LayoutParams(-1, -2))
+        fun field(hint: String, value: String): EditText = EditText(this).also {
+            it.hint = hint; it.setText(value); it.textSize = 14f; it.setSingleLine(true)
+            card.addView(it, LinearLayout.LayoutParams(-1, -2))
+        }
+        val internet = getSharedPreferences("internet_mode", MODE_PRIVATE)
+        val server = field("HTTPS Synchro Relay",
+            prefs.getString("server", internet.getString("server", "")) ?: "")
+        val token = field("Токен Android (64 hex)",
+            prefs.getString("token", internet.getString("token", "")) ?: "")
+        val recipient = field("UUID Windows у Relay", prefs.getString("recipient", "") ?: "")
+        val consent = CheckBox(this).apply {
+            text = "Розумію: через HTTPS, але файли на сервері поки БЕЗ E2EE"
+            textSize = 12f; isChecked = prefs.getBoolean("consent", false)
+        }
+        card.addView(consent)
+        val notice = label(card, "Relay зберігає файли тимчасово (типово 72 год). ПК має забрати їх вчасно.", 12f, muted)
+        gap(card, 8)
+        fun save() {
+            require(consent.isChecked) { "Потрібно підтвердити умови зберігання" }
+            FolderBackup.config(this, server.text.toString().trim(),
+                token.text.toString().trim(), recipient.text.toString().trim())
+            prefs.edit().putBoolean("consent", true).apply()
+        }
+        card.addView(button("Автобекап на Wi-Fi · кожні ~15 хв", true) {
+            try {
+                save(); FolderBackup.schedule(this)
+                notice.text = "Увімкнено · Android може відкладати фонові завдання"
+            } catch (e: Exception) { toast(e.message ?: "Помилка") }
+        }, LinearLayout.LayoutParams(-1, -2))
+        gap(card, 7)
+        card.addView(button("Синхронізувати зараз (Wi-Fi)", false) {
+            try {
+                save(); FolderBackup.once(this)
+                notice.text = "Синхронізацію поставлено в чергу. Статус оновиться після завершення."
+            } catch (e: Exception) { toast(e.message ?: "Помилка") }
+        }, LinearLayout.LayoutParams(-1, -2))
+        gap(card, 7)
+        card.addView(button("Вимкнути автоматичний бекап", false) {
+            FolderBackup.stop(this)
+            notice.text = "Автобекап вимкнено"
+        }, LinearLayout.LayoutParams(-1, -2))
+        gap(card, 7)
+        label(card, if (FolderBackup.enabled(this)) "Автобекап увімкнено" else "Автобекап вимкнено", 12f, muted)
+        prefs.getString("last_result", null)?.let { label(card, it, 11f, green) }
+        prefs.getString("last_error", null)?.let { label(card, "Помилка: " + it, 11f, muted) }
+    }
+
+    @Deprecated("Deprecated in Android platform API")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == 9021 && resultCode == RESULT_OK) {
+            val uri = data?.data ?: return
+            try {
+                contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                FolderBackup.addFolder(this, uri)
+                recreate()
+            } catch (e: Exception) { toast("Доступ до папки: " + e.message) }
+        }
     }
 
     private fun historyCard(parent: LinearLayout) {

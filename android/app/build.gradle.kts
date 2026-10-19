@@ -26,3 +26,8 @@ kotlin {
         jvmTarget.set(JvmTarget.JVM_17)
     }
 }
+
+dependencies {
+    implementation("androidx.work:work-runtime:2.10.2")
+    implementation("androidx.documentfile:documentfile:1.0.1")
+}
