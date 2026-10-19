@@ -133,7 +133,8 @@ class ReceiverService : Service() {
     }
 
     override fun onTimeout(startId: Int, fgsType: Int) {
-        // Android 15+ has a budget for dataSync foreground services.
+        // Android 15+: dataSync has a six-hour background budget per 24h.
+        lastError = "Android stopped the receiver after the foreground-service time limit. Open Synchro to restart."
         stopSelf()
     }
 
