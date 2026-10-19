@@ -198,7 +198,7 @@ class ReceiverService : Service() {
         val payload = JSONObject().put("message", message)
         if (code == 200) {
             payload.put("protocol", 1)
-            payload.put("appVersion", "0.3.0")
+            payload.put("appVersion", "0.3.1")
             payload.put("device", android.os.Build.MANUFACTURER + " " + android.os.Build.MODEL)
             payload.put("sdk", android.os.Build.VERSION.SDK_INT)
         }
