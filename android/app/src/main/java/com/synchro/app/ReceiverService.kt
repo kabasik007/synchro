@@ -8,7 +8,10 @@ import android.app.Service
 import android.content.ContentValues
 import android.content.Intent
 import android.os.IBinder
+import android.os.Environment
 import android.os.StatFs
+import android.system.ErrnoException
+import android.system.OsConstants
 import android.provider.MediaStore
 import org.json.JSONObject
 import java.io.BufferedInputStream
@@ -18,10 +21,14 @@ import java.io.InputStream
 import java.net.ServerSocket
 import java.net.Socket
 import java.net.SocketException
+import java.net.SocketTimeoutException
 import java.net.URLDecoder
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
 import java.util.Locale
+import java.util.Collections
+import java.util.concurrent.Semaphore
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.Executors
 
 /** Explicitly started foreground LAN receiver. No public internet port is needed. */
@@ -41,8 +48,11 @@ class ReceiverService : Service() {
     }
 
     private var serverSocket: ServerSocket? = null
-    @Volatile private var activeSocket: Socket? = null
+    private val activeSockets: MutableSet<Socket> = Collections.synchronizedSet(mutableSetOf())
     private val worker = Executors.newSingleThreadExecutor()
+    private val clients = Executors.newFixedThreadPool(3)
+    private val clientSlots = Semaphore(3)
+    private val uploadSlot = Semaphore(1)
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -65,19 +75,33 @@ class ReceiverService : Service() {
         worker.execute {
             lastError = null
             try {
+                cleanupPendingUploads()
                 ServerSocket(SynchroConfig.PORT).use { server ->
                     serverSocket = server
                     running = true
                     while (!Thread.currentThread().isInterrupted && !server.isClosed) {
                         val socket = server.accept()
-                        // Sequential uploads to avoid uncontrolled memory/disk pressure.
-                        activeSocket = socket
+                        if (!clientSlots.tryAcquire()) {
+                            try { socket.use { reply(it, 503, "Receiver busy, retry shortly") } }
+                            catch (_: Exception) {}
+                            continue
+                        }
+                        activeSockets.add(socket)
                         try {
-                            socket.use { handle(it) }
+                            clients.execute {
+                                try {
+                                    socket.use { handle(it) }
+                                } catch (_: Exception) {
+                                    // A bad client never stops other healthy sessions.
+                                } finally {
+                                    activeSockets.remove(socket)
+                                    clientSlots.release()
+                                }
+                            }
                         } catch (_: Exception) {
-                            // A malformed upload never ends the receiver service.
-                        } finally {
-                            activeSocket = null
+                            activeSockets.remove(socket)
+                            clientSlots.release()
+                            try { socket.close() } catch (_: Exception) {}
                         }
                     }
                 }
@@ -99,8 +123,12 @@ class ReceiverService : Service() {
         bytesReceived = 0
         bytesTotal = 0
         try { serverSocket?.close() } catch (_: Exception) {}
-        try { activeSocket?.close() } catch (_: Exception) {}
+        synchronized(activeSockets) {
+            activeSockets.forEach { try { it.close() } catch (_: Exception) {} }
+            activeSockets.clear()
+        }
         worker.shutdownNow()
+        clients.shutdownNow()
         super.onDestroy()
     }
 
@@ -109,9 +137,12 @@ class ReceiverService : Service() {
         stopSelf()
     }
 
-    private fun readLine(input: InputStream, limit: Int): String {
+    private fun readLine(socket: Socket, input: InputStream, limit: Int, deadlineNs: Long): String {
         val out = java.io.ByteArrayOutputStream()
         while (out.size() <= limit) {
+            val remainingMs = TimeUnit.NANOSECONDS.toMillis(deadlineNs - System.nanoTime())
+            if (remainingMs <= 0) throw SocketTimeoutException("Request headers timed out")
+            socket.soTimeout = minOf(remainingMs, 3000L).toInt().coerceAtLeast(1)
             val byte = input.read()
             if (byte < 0) throw EOFException("Connection closed")
             if (byte == 10) return out.toString("UTF-8").trimEnd('\r')
@@ -120,13 +151,47 @@ class ReceiverService : Service() {
         throw IllegalArgumentException("Header too long")
     }
 
+    private fun cleanupPendingUploads() {
+        // Only our application's own Downloads collection is visible by default on Android 10+.
+        // An upload from a killed process can leave a hidden IS_PENDING item behind.
+        try {
+            @Suppress("DEPRECATION")
+            val withPending = MediaStore.setIncludePending(MediaStore.Downloads.EXTERNAL_CONTENT_URI)
+            contentResolver.query(withPending, arrayOf(MediaStore.MediaColumns._ID),
+                "${MediaStore.MediaColumns.RELATIVE_PATH}=? AND ${MediaStore.MediaColumns.IS_PENDING}=1",
+                arrayOf(SynchroConfig.FOLDER), null)?.use { cursor ->
+                val index = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns._ID)
+                while (cursor.moveToNext()) {
+                    val item = android.content.ContentUris.withAppendedId(
+                        MediaStore.Downloads.EXTERNAL_CONTENT_URI, cursor.getLong(index))
+                    try { contentResolver.delete(item, null, null) } catch (_: Exception) {}
+                }
+            }
+        } catch (_: Exception) {
+            // MediaStore may not be mounted yet; any pending entry retains platform expiry.
+        }
+    }
+
+    private fun outOfSpace(error: Throwable): Boolean {
+        var cause: Throwable? = error
+        while (cause != null) {
+            if (cause is ErrnoException && cause.errno == OsConstants.ENOSPC) return true
+            if (cause.message?.contains("No space", ignoreCase = true) == true) return true
+            cause = cause.cause
+        }
+        return false
+    }
+
     private fun reply(socket: Socket, code: Int, message: String) {
         val reason = when (code) {
             200 -> "OK"
             201 -> "Created"
             400 -> "Bad Request"
             401 -> "Unauthorized"
+            408 -> "Request Timeout"
             413 -> "Content Too Large"
+            500 -> "Internal Server Error"
+            503 -> "Service Unavailable"
             507 -> "Insufficient Storage"
             else -> "Server Error"
         }
@@ -149,7 +214,8 @@ class ReceiverService : Service() {
         socket.soTimeout = 60_000
         val input = BufferedInputStream(socket.getInputStream(), 64 * 1024)
         try {
-            val request = readLine(input, 512)
+            val headerDeadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(12)
+            val request = readLine(socket, input, 512, headerDeadline)
             val isHealthCheck = request == "GET /health HTTP/1.1"
             if (!isHealthCheck && request != "POST /upload HTTP/1.1") {
                 reply(socket, 400, "Expected POST /upload or GET /health HTTP/1.1")
@@ -158,7 +224,7 @@ class ReceiverService : Service() {
             val fields = mutableMapOf<String, String>()
             var totalHeaderBytes = 0
             while (true) {
-                val line = readLine(input, MAX_HEADERS)
+                val line = readLine(socket, input, MAX_HEADERS, headerDeadline)
                 totalHeaderBytes += line.length + 2
                 if (totalHeaderBytes > MAX_HEADERS) throw IllegalArgumentException("Headers too large")
                 if (line.isEmpty()) break
@@ -204,26 +270,45 @@ class ReceiverService : Service() {
             }
             val name = SynchroConfig.safeName(
                 URLDecoder.decode(rawName, StandardCharsets.UTF_8.name()))
-            val disk = StatFs(filesDir.absolutePath)
-            if (disk.availableBytes < length + 32L * 1024 * 1024) {
-                reply(socket, 507, "Not enough free space")
+            // Check the external Downloads volume, not app-private filesDir.
+            @Suppress("DEPRECATION")
+            val downloadFolder = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+            if (downloadFolder.exists()) {
+                val disk = StatFs(downloadFolder.absolutePath)
+                if (disk.availableBytes < length + 32L * 1024 * 1024) {
+                    reply(socket, 507, "Not enough free space in Downloads")
+                    return
+                }
+            }
+            if (!uploadSlot.tryAcquire()) {
+                reply(socket, 503, "Another upload is already running")
                 return
             }
             bytesTotal = length
             bytesReceived = 0
             try {
-                receiveFile(input, length, hash, name)
+                socket.soTimeout = 60_000
+                val bodyDeadline = System.nanoTime() + TimeUnit.MINUTES.toNanos(30)
+                receiveFile(input, length, hash, name, bodyDeadline)
             } finally {
                 bytesTotal = 0
                 bytesReceived = 0
+                uploadSlot.release()
             }
             reply(socket, 201, "Saved to ${SynchroConfig.FOLDER}$name")
         } catch (e: Exception) {
-            try { reply(socket, 400, e.message ?: "Upload failed") } catch (_: Exception) {}
+            val status = when {
+                outOfSpace(e) -> 507
+                e is SocketTimeoutException -> 408
+                e is IllegalArgumentException || e is EOFException -> 400
+                else -> 500
+            }
+            try { reply(socket, status, e.message ?: "Upload failed") } catch (_: Exception) {}
         }
     }
 
-    private fun receiveFile(input: InputStream, length: Long, expectedSha: String, name: String) {
+    private fun receiveFile(input: InputStream, length: Long, expectedSha: String, name: String,
+        deadlineNs: Long) {
         val values = ContentValues().apply {
             put(MediaStore.MediaColumns.DISPLAY_NAME, name)
             put(MediaStore.MediaColumns.MIME_TYPE,
@@ -243,6 +328,9 @@ class ReceiverService : Service() {
                 val buffer = ByteArray(64 * 1024)
                 var remaining = length
                 while (remaining > 0) {
+                    if (System.nanoTime() >= deadlineNs) {
+                        throw SocketTimeoutException("Upload exceeded 30 minute limit")
+                    }
                     val n = input.read(buffer, 0, minOf(buffer.size.toLong(), remaining).toInt())
                     if (n < 0) throw EOFException("Transfer interrupted")
                     if (n == 0) continue
@@ -258,7 +346,8 @@ class ReceiverService : Service() {
                 throw IllegalArgumentException("SHA-256 mismatch: incomplete or changed file")
             }
             val ready = ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) }
-            resolver.update(uri, ready, null, null)
+            val updated = resolver.update(uri, ready, null, null)
+            if (updated != 1) throw IllegalStateException("Could not publish received file")
             ok = true
         } finally {
             if (!ok) resolver.delete(uri, null, null)
