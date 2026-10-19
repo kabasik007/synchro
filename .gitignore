@@ -12,3 +12,17 @@
 *.jks
 .idea/
 .vscode/
+
+# Synchro Rust relay and private operations
+/server/target/
+/server/.env
+/deploy/synchro.env
+*.sqlite
+*.sqlite3
+*.sqlite3-*
+*.db
+*.db-wal
+*.db-shm
+*.partial
+*.blob
+/var/lib/synchro/
