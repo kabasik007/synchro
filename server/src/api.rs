@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use futures_util::StreamExt;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use tokio::{fs, io::{AsyncReadExt, AsyncWriteExt}};
 use tokio_util::io::ReaderStream;
 use tracing::error;
@@ -341,7 +341,7 @@ pub(crate) struct ChunkDigest {
     sha256: String,
 }
 
-async fn disk_sha256(path: &Path) -> Result<String, ApiError> {
+async fn disk_sha256(path: &std::path::Path) -> Result<String, ApiError> {
     let mut file = fs::File::open(path).await.map_err(|_| ApiError::internal())?;
     let mut digest = Sha256::new();
     let mut buffer = [0u8; 64 * 1024];
