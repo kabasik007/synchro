@@ -4,6 +4,18 @@
 
 Security boundary: **browser ↔ browser and browser → Android may use E2EE with a separately exchanged key**. The native Windows Internet sender is not encrypted end-to-end yet (only HTTPS/TLS). This milestone is not production approved. See [v0.5 release/testing notes](docs/RELEASE-0.5.0.md).
 
+## One-command Windows test build
+
+Paste into Windows PowerShell from any directory:
+
+    cd 'M:\projects\synchro'
+    git pull --ff-only
+    .\scripts\build-all.ps1 -NoPull
+
+The script tests and builds the Windows app, builds the Android debug APK, tests and builds a Windows-only Rust server binary and checks browser JS syntax (if Node is installed). On **any failure** the command stops and creates no new distribution folder. Successful runs create unique dist/test-TIMESTAMP-ID folders; older builds are never copied as newly built.
+
+Options: -SkipAndroid, -SkipDesktop, -SkipServer, -NoPull. The server EXE is for Windows-only local testing: compile the aaPanel service on Linux. The Android APK is a debug build, not a signed production release. See docs/RELEASE-0.5.0.md.
+
 ## Existing LAN edition
 
 **Drop a freshly built APK on your Windows PC; receive it directly on Android without Viber, archives, or cloud uploads.**
