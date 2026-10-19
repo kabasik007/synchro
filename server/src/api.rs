@@ -420,10 +420,11 @@ pub(crate) async fn inbox(
     let db = state.db.lock().map_err(|_| ApiError::internal())?;
     let mut statement = db.prepare(
         "SELECT id,sender_id,recipient_id,filename,size_bytes,sha256,status,created_at,expires_at
-         FROM transfers WHERE recipient_id=?1 AND status='ready' AND expires_at>?2
+         FROM transfers WHERE recipient_id=?1 AND expires_at>?2
+         AND (status='ready' OR (status='delivered' AND delivered_at>?3))
          ORDER BY created_at DESC LIMIT 100",
     ).map_err(|_| ApiError::internal())?;
-    let rows = statement.query_map(params![device.id, now()], |r| Ok(TransferInfo {
+    let rows = statement.query_map(params![device.id, now(), now()-3600], |r| Ok(TransferInfo {
         id: r.get(0)?, sender_id: r.get(1)?, recipient_id: r.get(2)?,
         filename: r.get(3)?, size_bytes: r.get(4)?, sha256: r.get(5)?,
         status: r.get(6)?, created_at: r.get(7)?, expires_at: r.get(8)?,
