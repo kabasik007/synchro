@@ -206,7 +206,7 @@ fn queue_card(ui: &mut egui::Ui, app: &mut SynchroApp) {
                         ui.vertical(|ui| {
                             ui.label(RichText::new(name).color(LIGHT).size(13.0));
                             caption(ui, file_size(bytes));
-                            if app.current_file.as_deref() == Some(name.as_str()) {
+                            if app.current_path.as_ref() == Some(file) {
                                 ui.add(egui::ProgressBar::new(app.progress)
                                     .fill(BLUE).desired_width(135.0).show_percentage());
                             }
