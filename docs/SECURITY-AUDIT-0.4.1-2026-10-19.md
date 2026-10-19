@@ -1,3 +1,5 @@
+> **Follow-up:** Synchro v0.4.2 mitigates multiple P1 findings below. See [the current security release](RELEASE-0.4.2.md). This original audit remains valid for its v0.4.1 baseline; Rust and production tests are still needed.
+
 # Synchro v0.4.1 — незалежний аудит багів і безпеки
 
 **Дата:** 2026-10-19  
