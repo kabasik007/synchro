@@ -37,7 +37,7 @@ Synchro is an experimental open-source PC-to-phone file transfer utility. The Wi
 
 ## Synchro v0.4.1 — aaPanel browser installer
 
-**[Installation wizard, deployment steps and domain change](docs/INSTALL-AAPANEL-0.4.1.md)** · **[Security and bug audit](docs/AUDIT-INTERNET-0.4.1.md)**
+**[Installation wizard, deployment steps and domain change](docs/INSTALL-AAPANEL-0.4.2.md)** · **[Security and bug audit](docs/AUDIT-INTERNET-0.4.1.md)**
 
 - Designed for any HTTPS domain, e.g. \`disk.sitezilla.net\` or \`cloud.example.net\`. Nginx CSP and browser URLs are no longer tied to a specific hostname.
 - New responsive four-step installer at \`https://YOUR-DOMAIN/install/\`: verifies HTTPS/API, checks SQLite/filesystem, creates initial Windows and Android device tokens and permanently locks first-time setup.
