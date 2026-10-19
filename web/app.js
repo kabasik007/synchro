@@ -144,6 +144,20 @@ async function register() {
   if(me)await loadDevices();
  }catch(e){setStatus('registerMessage',e.message,'error')}
 }
+async function refreshServerStats(){
+ try{
+  const s=await api('/api/v1/admin/stats',{admin:true});
+  const gib=n=>(n/1073741824).toFixed(2)+' ГіБ';
+  $('serverStats').textContent=
+    'Пристроїв: '+s.devices+' · Завантажуються: '+s.uploading+
+    ' · У вхідних: '+s.ready+' · Доставлено: '+s.delivered+
+    ' · Зарезервовано: '+gib(s.reserved_bytes)+' / '+gib(s.quota_bytes)+
+    ' · Вільно на VPS: '+gib(s.free_bytes)+
+    ' · Термін зберігання: '+s.ttl_hours+' год';
+ }catch(e){
+  $('serverStats').textContent='Не вдалося отримати статистику: '+e.message;
+ }
+}
 async function changePublicDomain(){
  const input=$('adminOrigin').value.trim();
  if(!input) return setStatus('adminDomainMessage','Введи HTTPS-адресу.', 'error');
@@ -169,6 +183,7 @@ function live(){
 $('connect').addEventListener('click',connect);$('disconnect').addEventListener('click',disconnect);
 $('refresh').addEventListener('click',loadInbox);$('register').addEventListener('click',register);
 $('changeDomain').addEventListener('click',changePublicDomain);
+$('refreshServerStats').addEventListener('click',refreshServerStats);
 $('adminOrigin').value=location.protocol==='https:'?location.origin:'';
 $('choose').addEventListener('click',()=>$('uploadInput').click());
 $('uploadInput').addEventListener('change',e=>selectFile(e.target.files?.[0]));
