@@ -17,6 +17,7 @@ mod design;
 mod watch;
 mod internet;
 mod inbox;
+mod backup_crypto;
 
 const MAX_SIZE: u64 = 2 * 1024 * 1024 * 1024;
 
