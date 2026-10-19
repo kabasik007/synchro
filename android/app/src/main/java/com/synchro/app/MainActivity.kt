@@ -302,18 +302,30 @@ class MainActivity : Activity() {
             prefs.getString("token", internet.getString("token", "")) ?: "")
         token.inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
         val recipient = field("UUID Windows у Relay", prefs.getString("recipient", "") ?: "")
+        gap(card, 6)
+        label(card, "E2EE · AES-256-GCM (зашифровані блоки по 1 МіБ)", 13f, green, true)
+        label(card, "Створи 64-символьний ключ у Synchro Windows → Резервні копії. Скопіюй його сюди один раз. Збережи резервну копію ключа в менеджері паролів.", 12f, muted)
+        val e2eeKey = field("Вставити E2EE-ключ (64 hex)", "")
+        e2eeKey.inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+        label(card, if (BackupCrypto.hasMaster(this)) "Ключ захищений Android Keystore"
+            else "Ключ ще не збережено", 12f, muted)
         val consent = CheckBox(this).apply {
-            text = "Розумію: через HTTPS, але файли на сервері поки БЕЗ E2EE"
-            textSize = 12f; isChecked = prefs.getBoolean("consent", false)
+            text = "Розумію: без ключа не відновлю фото; сервер бачить назви та розміри файлів"
+            textSize = 12f; isChecked = prefs.getBoolean("consent_e2ee", false)
         }
         card.addView(consent)
-        val notice = label(card, "Relay зберігає файли тимчасово (типово 72 год). ПК має забрати їх вчасно.", 12f, muted)
+        val notice = label(card, "Зашифровані файли зберігаються на Relay тимчасово (типово 72 год). ПК має забрати їх вчасно.", 12f, muted)
         gap(card, 8)
         fun save() {
             require(consent.isChecked) { "Потрібно підтвердити умови зберігання" }
+            if (e2eeKey.text.isNotBlank()) {
+                BackupCrypto.saveMaster(this, e2eeKey.text.toString().trim())
+                e2eeKey.text.clear()
+            }
+            require(BackupCrypto.hasMaster(this)) { "Введи E2EE-ключ" }
             FolderBackup.config(this, server.text.toString().trim(),
                 token.text.toString().trim(), recipient.text.toString().trim())
-            prefs.edit().putBoolean("consent", true).apply()
+            prefs.edit().putBoolean("consent_e2ee", true).apply()
         }
         card.addView(button("Автобекап на Wi-Fi · кожні ~15 хв", true) {
             try {
