@@ -386,6 +386,32 @@ mod tests {
         assert!(safe_id("../../etc/passwd").is_err());
     }
 
+    #[test]
+    fn upgrades_older_device_schema_without_losing_devices() {
+        let root = std::env::temp_dir().join(format!("synchro-migrate-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("old.sqlite3");
+        {
+            let old = Connection::open(&path).unwrap();
+            old.execute_batch("CREATE TABLE devices (
+                id TEXT PRIMARY KEY, name TEXT NOT NULL,
+                token_sha256 TEXT NOT NULL UNIQUE, created_at INTEGER NOT NULL
+            );
+            INSERT INTO devices(id,name,token_sha256,created_at)
+                VALUES('legacy','Old PC','aabb',1);").unwrap();
+        }
+        let migrated = init_db(&path).unwrap();
+        let name: String = migrated.query_row(
+            "SELECT name FROM devices WHERE id='legacy' AND revoked=0",
+            [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(name, "Old PC");
+        let version: i64 = migrated.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
+        assert_eq!(version, 2);
+        drop(migrated);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
     #[tokio::test]
     async fn prune_respects_delivery_grace_and_mutation_lock() {
         let root = std::env::temp_dir().join(format!("synchro-security-{}", uuid::Uuid::new_v4()));
