@@ -18,7 +18,7 @@
 </aside>
 <main>
  <div class="top">
-  <div><h1>Передача файлів <em>без меж</em></h1><div class="subtle">Windows ↔ Android через інтернет, без локальної мережі</div></div>
+  <div><h1>Передача файлів <em>без меж</em></h1><div class="subtle">Передача через власний HTTPS Relay · підтвердження одержувачем</div></div>
   <div class="pill" id="connection">● Не підключено</div>
  </div>
  <div class="layout">
@@ -28,7 +28,7 @@
    <div class="field"><label for="deviceToken">Токен пристрою</label><input id="deviceToken" type="password" autocomplete="off" spellcheck="false" placeholder="64-символьний токен"></div>
    <div class="row"><button id="connect" class="primary">Підключитися</button><button id="disconnect">Відключитися</button></div>
    <div id="loginMessage" class="status" role="status"></div>
-   <div class="chips"><span class="chip">HTTPS</span><span class="chip">SHA-256</span><span class="chip">Офлайн-черга</span></div>
+   <div class="chips"><span class="chip">HTTPS</span><span class="chip">SHA-256</span><span class="chip">Відновлення у вкладці</span></div>
   </section>
   <section class="card">
    <h2>▣ Пристрої</h2>
@@ -41,7 +41,7 @@
    <div class="field"><label for="recipient">Одержувач</label><select id="recipient"><option value="">Спочатку підключи пристрій</option></select></div>
    <div class="drop" id="drop">
     <div style="font-size:35px;color:#65a6ff">⇧</div><strong>Перетягни файл сюди</strong>
-    <small>або вибери файл · вебдемо до 64 МБ</small>
+    <small>або вибери файл · вебрежим до 64 МіБ</small>
     <div><button id="choose">Вибрати файл</button></div>
    </div>
    <input id="uploadInput" type="file" class="hidden" aria-label="Вибери файл">
