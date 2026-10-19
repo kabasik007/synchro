@@ -45,7 +45,7 @@ backup is HTTPS transport and is NOT end-to-end encrypted.
 - The native Windows receiver skips encrypted (E2EE) transfers. Native E2EE
   for automatic Android → Windows backups is a future security milestone.
 - Folder paths are NOT preserved: flat filenames have a source-folder prefix.
-- Android reads at most 200 direct file entries per selected folder per run,
+- Android reads at most 200 direct file entries per selected folder per run (round-robin pagination),
   up to five selected folders, file size up to 2GiB (excluding empty files).
 - Per-file sync history is held in app-private settings; it distinguishes
   stored-on-relay from Windows delivery ACK, and retries expired uploads.

@@ -1,6 +1,7 @@
 package com.synchro.app
 
 import android.content.Context
+import android.content.Intent
 import android.net.Uri
 import androidx.documentfile.provider.DocumentFile
 import androidx.work.*
@@ -59,11 +60,19 @@ object FolderBackup {
             "$JOB.once", ExistingWorkPolicy.KEEP, req)
     }
     fun stop(context: Context, clear: Boolean = false) {
+        val granted = if (clear) folders(context) else emptyList()
         val p = context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
         p.edit().putBoolean("enabled", false)
             .also { if (clear) it.putString("folders", "[]") }.apply()
         WorkManager.getInstance(context).cancelUniqueWork(JOB)
         WorkManager.getInstance(context).cancelUniqueWork("$JOB.once")
+        // A removed backup folder should not remain silently readable forever.
+        granted.forEach { uri ->
+            try {
+                context.contentResolver.releasePersistableUriPermission(
+                    uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            } catch (_: SecurityException) { /* permission already revoked */ }
+        }
     }
 }
 
@@ -230,12 +239,23 @@ class FolderBackupWorker(ctx: Context, params: WorkerParameters): Worker(ctx, pa
                 if (isStopped) return Result.retry()
                 require(uri.toString() in grants) { "SAF permission has expired" }
                 val dir = DocumentFile.fromTreeUri(applicationContext, uri) ?: error("Folder unavailable")
-                for (doc in dir.listFiles().filter { it.isFile }.take(200)) {
+                // Round-robin pagination ensures albums with >200 photos eventually
+                // receive coverage rather than re-checking the same first 200 forever.
+                val files = dir.listFiles().filter { it.isFile }
+                    .sortedBy { it.uri.toString() }
+                if (files.isEmpty()) continue
+                val cursorKey = "cursor_" + sha(uri.toString().toByteArray(Charsets.UTF_8))
+                val start = prefs.getInt(cursorKey, 0).coerceIn(0, files.size - 1)
+                val batchSize = minOf(200, files.size)
+                for (n in 0 until batchSize) {
                     if (isStopped) return Result.retry()
-                    val file = doc.name.orEmpty()
-                    if (file.startsWith(".") || file.endsWith(".tmp") || file.endsWith(".part")) continue
+                    val doc = files[(start + n) % files.size]
+                    val name = doc.name.orEmpty()
+                    if (name.startsWith(".") || name.endsWith(".tmp") ||
+                        name.endsWith(".part")) continue
                     upload(base, token, recipient, dir, doc)
                 }
+                prefs.edit().putInt(cursorKey, (start + batchSize) % files.size).apply()
             }
             prefs.edit().putString("last_result", "Перевірено " + System.currentTimeMillis())
                 .remove("last_error").apply()
