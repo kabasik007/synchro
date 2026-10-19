@@ -465,7 +465,8 @@ mod tests {
         let columns = {
             let mut stmt = db.prepare("PRAGMA table_info(transfers)").unwrap();
             let names = stmt.query_map([], |r| r.get::<_, String>(1)).unwrap();
-            names.collect::<Result<Vec<_>, _>>().unwrap()
+            let result = names.collect::<Result<Vec<_>, _>>().unwrap();
+            result
         };
         assert!(columns.iter().any(|n| n == "encrypted"));
         assert!(columns.iter().any(|n| n == "delivered_at"));
