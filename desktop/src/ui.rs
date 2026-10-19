@@ -453,7 +453,7 @@ fn settings_page(ui: &mut egui::Ui, app: &mut SynchroApp) {
             "Автоматично перевіряти вхідні кожні 60 секунд (поки Synchro відкритий)");
         ui.horizontal(|ui| {
             if ui.add_enabled(!app.receiving,
-                solid_button(if app.receiving { "Перевіряємо…" } else { "Отримати файли", }, true, 180.0)
+                solid_button(if app.receiving { "Перевіряємо…" } else { "Отримати файли" }, true, 180.0)
             ).clicked() { app.receive_inbox(); }
             if ui.small_button("Зберегти").clicked() { app.persist_settings(); }
         });

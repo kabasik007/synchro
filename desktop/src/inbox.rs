@@ -52,7 +52,7 @@ fn verified(path: &Path, expected: &str, expected_size: u64) -> bool {
     format!("{:x}", digest.finalize()).eq_ignore_ascii_case(expected)
 }
 
-fn checked_response(mut response: Response) -> Result<Response,String> {
+fn checked_response(response: Response) -> Result<Response,String> {
     if !response.status().is_success() {
         let code=response.status();
         let mut small=String::new();
