@@ -2,6 +2,7 @@
 //! Nginx/Cloudflare must terminate HTTPS; this service binds loopback only.
 mod api;
 mod websocket;
+mod setup;
 
 use axum::{
     http::{header, HeaderMap, StatusCode},
@@ -186,7 +187,11 @@ fn init_db(path: &Path) -> Result<Connection, Box<dyn std::error::Error>> {
          CREATE INDEX IF NOT EXISTS idx_transfer_recipient
          ON transfers(recipient_id,status,created_at);
          CREATE INDEX IF NOT EXISTS idx_transfer_expiry
-         ON transfers(expires_at,status);"
+         ON transfers(expires_at,status);
+         CREATE TABLE IF NOT EXISTS system_settings (
+             key TEXT PRIMARY KEY,
+             value TEXT NOT NULL
+         );"
     )?;
     // An interrupted finalization should be retried rather than stuck forever.
     db.execute(
@@ -280,7 +285,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
     let app = Router::new()
-        .route("/health", get(|| async { Json(json!({"status":"ok","version":"0.4.0"})) }))
+        .route("/health", get(|| async { Json(json!({"status":"ok","version":"0.4.1"})) }))
+        .route("/api/v1/setup/status", get(setup::status))
+        .route("/api/v1/setup/check", get(setup::check))
+        .route("/api/v1/setup/finish", post(setup::finish))
         .route("/api/v1/admin/devices", post(api::register_device))
         .route("/api/v1/admin/devices/{id}/revoke", post(api::revoke_device))
         .route("/api/v1/admin/prune", post(api::prune))
