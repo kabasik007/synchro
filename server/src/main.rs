@@ -524,8 +524,27 @@ mod tests {
             db.execute("UPDATE transfers SET delivered_at=?1 WHERE id=?2",
                 params![now()-4000, transfer]).unwrap();
         }
+        // A transfer being assembled must never be deleted by expiry cleanup,
+        // even if its expiration passes during a large finalization.
+        let finalizing = uuid::Uuid::new_v4().to_string();
+        {
+            let db = state.db.lock().unwrap();
+            db.execute("INSERT INTO transfers(id,sender_id,recipient_id,filename,
+                size_bytes,sha256,status,created_at,expires_at)
+                VALUES(?1,?2,?3,'finalizing.bin',3,?4,'finalizing',?5,?6)",
+                params![finalizing, sender, recipient, "f".repeat(64), now()-100, now()-10]).unwrap();
+        }
+        let live_blob = state.config.storage.join("objects").join(format!("{finalizing}.tmp"));
+        tokio::fs::write(&live_blob, b"xyz").await.unwrap();
         assert_eq!(prune_expired(&state).await.unwrap(), 1);
         assert!(!blob.exists());
+        assert!(live_blob.exists());
+        let db = state.db.lock().unwrap();
+        let exists: i64 = db.query_row(
+            "SELECT COUNT(1) FROM transfers WHERE id=?1", [&finalizing], |r| r.get(0)
+        ).unwrap();
+        assert_eq!(exists, 1);
+        drop(db);
         drop(state);
         let _ = std::fs::remove_dir_all(root);
     }

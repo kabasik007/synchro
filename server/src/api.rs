@@ -682,6 +682,17 @@ pub(crate) async fn prune(
 mod tests {
     use super::*;
 
+    #[tokio::test]
+    async fn committed_chunk_sha_matches_downloaded_bytes() {
+        let file = std::env::temp_dir().join(format!("synchro-chunk-hash-{}", uuid::Uuid::new_v4()));
+        let bytes = b"Synchro resume integrity test";
+        fs::write(&file, bytes).await.unwrap();
+        let expected = hex::encode(Sha256::digest(bytes));
+        assert_eq!(disk_sha256(&file).await.unwrap(), expected);
+        fs::remove_file(&file).await.unwrap();
+    }
+
+
     #[test]
     fn chunk_boundaries() {
         assert_eq!(chunk_count(1), 1);
