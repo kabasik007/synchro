@@ -61,6 +61,26 @@ pub(crate) async fn register_device(
     ))
 }
 
+pub(crate) async fn revoke_device(
+    AxumState(state): AxumState<State>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+) -> Result<StatusCode, ApiError> {
+    verify_admin(&headers, &state)?;
+    let id = safe_id(&id)?;
+    {
+        let db = state.db.lock().map_err(|_| ApiError::internal())?;
+        let affected = db.execute(
+            "UPDATE devices SET revoked = 1 WHERE id=?1 AND revoked=0", [&id]
+        ).map_err(|_| ApiError::internal())?;
+        if affected != 1 { return Err(ApiError::not_found()); }
+    }
+    let _ = state.notifications.send(Signal {
+        event_type: "device_revoked".into(), device_id: id, transfer_id: String::new(),
+    });
+    Ok(StatusCode::NO_CONTENT)
+}
+
 pub(crate) async fn me(
     AxumState(state): AxumState<State>,
     headers: HeaderMap,
@@ -74,7 +94,7 @@ pub(crate) async fn devices(
 ) -> Result<Json<Vec<Device>>, ApiError> {
     verify_device(&headers, &state)?;
     let db = state.db.lock().map_err(|_| ApiError::internal())?;
-    let mut statement = db.prepare("SELECT id,name FROM devices ORDER BY created_at,id")
+    let mut statement = db.prepare("SELECT id,name FROM devices WHERE revoked=0 ORDER BY created_at,id")
         .map_err(|_| ApiError::internal())?;
     let rows = statement.query_map([], |r| Ok(Device { id: r.get(0)?, name: r.get(1)? }))
         .map_err(|_| ApiError::internal())?;
@@ -170,7 +190,7 @@ pub(crate) async fn create_transfer(
     {
         let db = state.db.lock().map_err(|_| ApiError::internal())?;
         let exists: bool = db.query_row(
-            "SELECT EXISTS(SELECT 1 FROM devices WHERE id=?1)", [&recipient],
+            "SELECT EXISTS(SELECT 1 FROM devices WHERE id=?1 AND revoked=0)", [&recipient],
             |r| r.get(0),
         ).map_err(|_| ApiError::internal())?;
         if !exists { return Err(ApiError::not_found()); }
