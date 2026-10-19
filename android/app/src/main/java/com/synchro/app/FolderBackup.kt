@@ -13,7 +13,7 @@ import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
 import javax.net.ssl.HttpsURLConnection
 
-/** Explicit opt-in HTTPS backup. Remote relay is TEMPORARY and NOT E2EE. */
+/** Explicit opt-in E2EE backup. Relay stores ciphertext only; filenames stay visible. */
 object FolderBackup {
     private const val PREF = "folder_backup"
     private const val JOB = "synchro.selected.folder.backup"
@@ -45,6 +45,7 @@ object FolderBackup {
     private fun wifi() = Constraints.Builder().setRequiredNetworkType(NetworkType.UNMETERED).build()
     fun schedule(context: Context) {
         require(folders(context).isNotEmpty()) { "Спочатку вибери папку" }
+        require(BackupCrypto.hasMaster(context)) { "Спочатку збережи E2EE-ключ" }
         context.getSharedPreferences(PREF, Context.MODE_PRIVATE).edit()
             .putBoolean("enabled", true).apply()
         val req = PeriodicWorkRequest.Builder(FolderBackupWorker::class.java, 15, TimeUnit.MINUTES)
@@ -54,6 +55,7 @@ object FolderBackup {
     }
     fun once(context: Context) {
         require(folders(context).isNotEmpty()) { "Спочатку вибери папку" }
+        require(BackupCrypto.hasMaster(context)) { "Спочатку збережи E2EE-ключ" }
         val req = OneTimeWorkRequest.Builder(FolderBackupWorker::class.java)
             .setConstraints(wifi()).build()
         WorkManager.getInstance(context).enqueueUniqueWork(
@@ -166,65 +168,109 @@ class FolderBackupWorker(ctx: Context, params: WorkerParameters): Worker(ctx, pa
         require(value.isNotBlank()) { "Bad filename" }
         return value
     }
-    private fun upload(base: String, token: String, recipient: String, dir: DocumentFile, doc: DocumentFile) {
+    private fun upload(base: String, token: String, recipient: String, dir: DocumentFile,
+                       doc: DocumentFile, master: ByteArray) {
         val size = doc.length()
-        if (size !in 1..MAX) return
+        if (size !in 1..(MAX - 40000L)) return
         val modified = doc.lastModified()
+        val ciphertextSize = BackupCrypto.cipherSize(size)
         val key = sha((base + "|" + recipient + "|" + doc.uri + "|" + size + "|" + modified)
             .toByteArray(Charsets.UTF_8))
-        var id = ledger.getString(key, null)?.substringBefore("|").orEmpty()
-        val digest = streamHash(doc.uri)
-        val old = ledger.getString(key, "").orEmpty()
-        if (old.endsWith("|delivered|" + digest)) return
+        val plainHash = streamHash(doc.uri)
+        val keyFingerprint = sha(master)
+        val saved = try {
+            JSONObject(ledger.getString(key, "{}") ?: "{}")
+        } catch (_: Exception) { JSONObject() }
+
+        if (saved.optString("plain") == plainHash && saved.optString("key_id") == keyFingerprint
+            && saved.optString("status") == "delivered") return
+        val reusable = saved.optString("plain") == plainHash
+            && saved.optString("key_id") == keyFingerprint
+            && saved.optString("salt").length == 32
+            && saved.optString("prefix").length == 16
+        val params = if (reusable)
+            BackupCrypto.Parameters(
+                BackupCrypto.fromHex(saved.getString("salt")),
+                BackupCrypto.fromHex(saved.getString("prefix")))
+        else BackupCrypto.fresh()
+        fun source(): java.io.InputStream {
+            val input=applicationContext.contentResolver.openInputStream(doc.uri)
+                ?: error("Cannot read selected photo")
+            return BackupCrypto.stream(input, size, master, params)
+        }
+        // The ciphertext digest, not plaintext hash, is shared with Relay.
+        val encryptedHash=BackupCrypto.shaStream(source())
+        var id=if (reusable && saved.optString("cipher") == encryptedHash)
+            saved.optString("id") else ""
+
+        fun ledgerState(stage: String) {
+            val entry=JSONObject().put("id", id).put("plain", plainHash)
+                .put("cipher", encryptedHash).put("key_id", keyFingerprint)
+                .put("salt", BackupCrypto.hex(params.salt))
+                .put("prefix", BackupCrypto.hex(params.prefix))
+                .put("status", stage)
+            require(ledger.edit().putString(key, entry.toString()).commit()) {
+                "Не вдалося зберегти зашифрований checkpoint"
+            }
+        }
+
         if (id.isNotBlank()) {
-            val state = try { get(base, "/api/v1/transfers/" + id, token) } catch (_: Exception) { null }
-            if (state == null || state.optString("sha256") != digest ||
-                state.optString("recipient_id") != recipient) id = ""
+            val state = try { get(base, "/api/v1/transfers/" + id, token) }
+                catch (_: Exception) { null }
+            if (state == null || state.optString("sha256") != encryptedHash
+                || state.optString("recipient_id") != recipient
+                || !state.optBoolean("encrypted", false)) id = ""
             else when (state.optString("status")) {
-                "delivered" -> {
-                    ledger.edit().putString(key, id + "|delivered|" + digest).commit()
-                    return
-                }
+                "delivered" -> { ledgerState("delivered"); return }
                 "ready", "finalizing" -> return
             }
         }
         if (id.isBlank()) {
+            // Preserve the encryption parameters before network I/O: on crash,
+            // the next run must use the same key/nonce for an existing transfer.
+            ledgerState("prepared")
             id = post(base, "/api/v1/transfers", token, JSONObject()
                 .put("to_device_id", recipient)
                 .put("filename", name(dir.name ?: "Android", doc.name ?: "file.bin"))
-                .put("size_bytes", size).put("sha256", digest).put("encrypted", false))
+                .put("size_bytes", ciphertextSize)
+                .put("sha256", encryptedHash).put("encrypted", true))
                 .getJSONObject("transfer").getString("id")
-            ledger.edit().putString(key, id + "|uploading|" + digest).commit()
+            ledgerState("uploading")
         }
         val route = "/api/v1/transfers/" + id
         val checkpoint = get(base, route + "/chunks", token)
         if (checkpoint.optString("status") != "uploading") return
         val hashes = mutableMapOf<Int, String>()
-        val saved = checkpoint.optJSONArray("uploaded_chunks") ?: JSONArray()
-        for (i in 0 until saved.length()) {
-            val item = saved.getJSONObject(i)
+        val savedChunks = checkpoint.optJSONArray("uploaded_chunks") ?: JSONArray()
+        for (i in 0 until savedChunks.length()) {
+            val item = savedChunks.getJSONObject(i)
             hashes[item.getInt("index")] = item.getString("sha256")
         }
         require(checkpoint.getJSONArray("uploaded_indices").length() == 0 || hashes.isNotEmpty()) {
             "Онови Relay до v0.5.1 для перевірки чанків"
         }
-        applicationContext.contentResolver.openInputStream(doc.uri)?.use { input ->
-            var at = 0L
+        source().use { input ->
+            var offset = 0L
             var index = 0
-            while (at < size) {
-                val chunk = nextChunk(input, minOf(CHUNK.toLong(), size - at).toInt())
-                if (hashes[index] != sha(chunk)) {
-                    if (hashes.containsKey(index)) request(base, route + "/chunks/" + index, token, "DELETE")
-                    request(base, route + "/chunks/" + index, token, "PUT", chunk)
+            while (offset < ciphertextSize) {
+                val block=nextChunk(input, minOf(CHUNK.toLong(), ciphertextSize - offset).toInt())
+                if (hashes[index] != sha(block)) {
+                    if (hashes.containsKey(index)) {
+                        request(base, route + "/chunks/" + index, token, "DELETE")
+                    }
+                    request(base, route + "/chunks/" + index, token, "PUT", block)
                 }
-                at += chunk.size
+                offset += block.size
                 index++
             }
-        } ?: error("Cannot reopen file")
-        require(doc.length() == size && doc.lastModified() == modified) { "Source changed" }
+        }
+        // Do not publish a ciphertext stream if source changed mid-encryption.
+        require(doc.length() == size && doc.lastModified() == modified
+            && streamHash(doc.uri) == plainHash) {
+            "Фото або відео змінилося під час копіювання"
+        }
         post(base, route + "/finish", token, null)
-        // NOT delivered yet. The next WorkManager run checks for Windows ACK.
-        ledger.edit().putString(key, id + "|uploading|" + digest).commit()
+        ledgerState("uploading")
     }
     override fun doWork(): Result {
         return try {
@@ -233,6 +279,8 @@ class FolderBackupWorker(ctx: Context, params: WorkerParameters): Worker(ctx, pa
             val recipient = prefs.getString("recipient", "").orEmpty()
             require(token.matches(Regex("[0-9a-fA-F]{64}")) &&
                 recipient.matches(Regex("[0-9a-fA-F-]{36}"))) { "Check Android token and Windows UUID" }
+            val master = BackupCrypto.loadMaster(applicationContext)
+            try {
             val grants = applicationContext.contentResolver.persistedUriPermissions
                 .filter { it.isReadPermission }.map { it.uri.toString() }.toSet()
             for (uri in FolderBackup.folders(applicationContext)) {
@@ -253,10 +301,11 @@ class FolderBackupWorker(ctx: Context, params: WorkerParameters): Worker(ctx, pa
                     val name = doc.name.orEmpty()
                     if (name.startsWith(".") || name.endsWith(".tmp") ||
                         name.endsWith(".part")) continue
-                    upload(base, token, recipient, dir, doc)
+                    upload(base, token, recipient, dir, doc, master)
                 }
                 prefs.edit().putInt(cursorKey, (start + batchSize) % files.size).apply()
             }
+            } finally { master.fill(0) }
             prefs.edit().putString("last_result", "Перевірено " + System.currentTimeMillis())
                 .remove("last_error").apply()
             Result.success()
