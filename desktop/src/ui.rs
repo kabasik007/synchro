@@ -77,7 +77,7 @@ fn sidebar(ui: &mut egui::Ui, app: &mut SynchroApp) {
             });
         ui.vertical(|ui| {
             title(ui, "Synchro", 22.0);
-            caption(ui, "STUDIO  ·  v0.5");
+            caption(ui, "STUDIO  ·  v0.5.1");
         });
     });
     ui.add_space(26.0);
@@ -445,7 +445,7 @@ fn settings_page(ui: &mut egui::Ui, app: &mut SynchroApp) {
 
 fn about(ui: &mut egui::Ui) {
     title(ui, "Synchro", 32.0);
-    caption(ui, "v0.5.0 · Open source · MIT");
+    caption(ui, "v0.5.1 · Open source · MIT");
     ui.add_space(18.0);
     card(ui, |ui| {
         title(ui, "Швидше, ніж пересилати через месенджер", 18.0);

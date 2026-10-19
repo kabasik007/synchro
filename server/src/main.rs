@@ -368,7 +368,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
     let app = Router::new()
-        .route("/health", get(|| async { Json(json!({"status":"ok","version":"0.5.0"})) }))
+        .route("/health", get(|| async { Json(json!({"status":"ok","version":"0.5.1"})) }))
         .route("/api/v1/setup/status", get(setup::status))
         .route("/api/v1/setup/check", get(setup::check))
         .route("/api/v1/setup/finish", post(setup::finish))

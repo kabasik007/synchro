@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Staging-only Synchro 0.5 smoke test. Needs HTTPS URL and admin token in env."""
+"""Staging-only Synchro 0.5.1 integrity/recovery smoke test. Requires HTTPS and admin token."""
 import hashlib
 import json
 import os
@@ -50,6 +50,17 @@ try:
     request(path + "/chunks/0", sender["token"], "PUT", data=blob[:8 * 1024 * 1024])
     _, checkpoint = request(path + "/chunks", sender["token"])
     assert checkpoint["uploaded_indices"] == [0], checkpoint
+    assert checkpoint["uploaded_chunks"][0]["index"] == 0
+    assert checkpoint["uploaded_chunks"][0]["sha256"] == hashlib.sha256(blob[:8 * 1024 * 1024]).hexdigest()
+    # Simulate corruption: explicitly replace one accepted block, then recover.
+    request(path + "/chunks/0", sender["token"], "DELETE")
+    _, checkpoint = request(path + "/chunks", sender["token"])
+    assert checkpoint["uploaded_indices"] == [], checkpoint
+    request(path + "/chunks/0", sender["token"], "PUT", data=b"X" * (8 * 1024 * 1024))
+    _, checkpoint = request(path + "/chunks", sender["token"])
+    assert checkpoint["uploaded_chunks"][0]["sha256"] != hashlib.sha256(blob[:8 * 1024 * 1024]).hexdigest()
+    request(path + "/chunks/0", sender["token"], "DELETE")
+    request(path + "/chunks/0", sender["token"], "PUT", data=blob[:8 * 1024 * 1024])
     request(path + "/chunks/1", sender["token"], "PUT", data=blob[8 * 1024 * 1024:])
     status, _ = request(path + "/finish", sender["token"], "POST", data=b"")
     assert status in (200, 202)
@@ -66,7 +77,7 @@ try:
     _, downloaded = request(path + "/download", receiver["token"])
     assert hashlib.sha256(downloaded).hexdigest() == digest
     request(path + "/ack", receiver["token"], "POST", payload={"sha256": digest})
-    print("PASS: token denial, resume checkpoint, async finish, inbox SHA-256, ACK")
+    print("PASS: auth rejection, chunk SHA-256/replacement, async finish, inbox, verified ACK")
 finally:
     for device in devices:
         try:
