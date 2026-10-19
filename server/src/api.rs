@@ -317,10 +317,11 @@ pub(crate) async fn finish_transfer(
         Ok(()) => {
             {
                 let db = state.db.lock().map_err(|_| ApiError::internal())?;
-                db.execute(
+                let changed = db.execute(
                     "UPDATE transfers SET status='ready' WHERE id=?1 AND status='finalizing'",
                     [&id],
                 ).map_err(|_| ApiError::internal())?;
+                if changed != 1 { return Err(ApiError::conflict("Transfer expired during finalization")); }
             }
             let _ = fs::remove_dir_all(state.config.storage.join("chunks").join(&id)).await;
             let _ = state.notifications.send(Signal {
