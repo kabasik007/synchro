@@ -106,7 +106,7 @@ fn hero(ui: &mut egui::Ui, app: &SynchroApp) {
         ui.label(RichText::new("●").color(color).size(17.0));
         ui.label(RichText::new(state).color(color).size(14.0).strong());
         ui.separator();
-        caption(ui, "Пряме з'єднання без Viber і архівування");
+        caption(ui, "LAN/Tailscale або HTTPS Internet Mode");
     });
 }
 
@@ -132,13 +132,13 @@ fn device_card(ui: &mut egui::Ui, app: &mut SynchroApp) {
             });
         }
         ui.add_space(7.0);
-        caption(ui, "Адреса приймача");
+        caption(ui, "Адреса телефона (LAN) або HTTPS сервера (Internet Mode)");
         let address_width = ui.available_width();
         ui.add(egui::TextEdit::singleline(&mut app.settings.address)
-            .hint_text("http://192.168.1.100:8765")
+            .hint_text("http://192.168.1.100:8765 або https://disk.sitezilla.net")
             .desired_width(address_width));
         ui.add_space(7.0);
-        caption(ui, "Код сполучення (32 символи)");
+        caption(ui, if app.settings.address.starts_with("https://") { "Токен сервера (64 символи)" } else { "Код сполучення (32 символи)" });
         ui.horizontal(|ui| {
             let token_width = (ui.available_width() - 90.0).max(120.0);
             ui.add(egui::TextEdit::singleline(&mut app.settings.token)
@@ -148,6 +148,14 @@ fn device_card(ui: &mut egui::Ui, app: &mut SynchroApp) {
                 app.show_token = !app.show_token;
             }
         });
+        if app.settings.address.trim().starts_with("https://") {
+            ui.add_space(7.0);
+            caption(ui, "UUID пристрою-одержувача (з адмінпанелі сервера)");
+            ui.add(egui::TextEdit::singleline(&mut app.settings.recipient_id)
+                .hint_text("xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx")
+                .desired_width(ui.available_width()));
+            caption(ui, "Windows Internet Mode працює через TLS, але ПОКИ БЕЗ E2EE. Для секретних файлів використовуй браузерне E2EE.");
+        }
         ui.add_space(5.0);
         ui.horizontal(|ui| {
             if ui.small_button("Зберегти").clicked() { app.persist_settings(); }
@@ -374,14 +382,14 @@ fn settings_page(ui: &mut egui::Ui, app: &mut SynchroApp) {
     card(ui, |ui| {
         title(ui, "Безпека", 18.0);
         caption(ui, "Код сполучення зберігається локально у профілі Windows.");
-        caption(ui, "У довіреній локальній мережі використовується HTTP; через інтернет — тільки Tailscale.");
+        caption(ui, "LAN: HTTP. Internet: HTTPS із перевіркою SHA-256. Windows E2EE ще в розробці.");
         caption(ui, "Не передавай секретний код іншим людям.");
     });
 }
 
 fn about(ui: &mut egui::Ui) {
     title(ui, "Synchro", 32.0);
-    caption(ui, "v0.3.1 · Open source · MIT");
+    caption(ui, "v0.5.0 · Open source · MIT");
     ui.add_space(18.0);
     card(ui, |ui| {
         title(ui, "Швидше, ніж пересилати через месенджер", 18.0);

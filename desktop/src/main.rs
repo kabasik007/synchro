@@ -14,6 +14,7 @@ use std::net::IpAddr;
 
 mod ui;
 mod watch;
+mod internet;
 
 const MAX_SIZE: u64 = 2 * 1024 * 1024 * 1024;
 
@@ -21,6 +22,8 @@ const MAX_SIZE: u64 = 2 * 1024 * 1024 * 1024;
 struct Settings {
     address: String,
     token: String,
+    #[serde(default)]
+    recipient_id: String,
     #[serde(default = "default_auto_send")]
     auto_send: bool,
     #[serde(default)]
@@ -33,7 +36,7 @@ fn default_auto_send() -> bool { true }
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { address: String::new(), token: String::new(), auto_send: true, watch_folder: String::new(), watch_enabled: false }
+        Self { address: String::new(), token: String::new(), recipient_id: String::new(), auto_send: true, watch_folder: String::new(), watch_enabled: false }
     }
 }
 
@@ -188,6 +191,7 @@ fn hex_digest(file: &Path) -> Result<String, String> {
 }
 
 fn check_receiver(settings: &Settings) -> Result<DeviceInfo, String> {
+    if settings.address.trim().starts_with("https://") { return internet::probe(settings); }
     if settings.token.trim().len() != 32 || !settings.token.trim().bytes().all(|b| b.is_ascii_hexdigit()) {
         return Err("Спочатку введи правильний код сполучення (32 символи).".into());
     }
@@ -215,6 +219,7 @@ fn check_receiver(settings: &Settings) -> Result<DeviceInfo, String> {
 }
 
 fn send_files(files: Vec<PathBuf>, settings: Settings, tx: Sender<Event>) -> Result<String, String> {
+    if settings.address.trim().starts_with("https://") { return internet::send(files, settings, tx); }
     if settings.token.trim().len() != 32
         || !settings.token.trim().bytes().all(|b| b.is_ascii_hexdigit())
     {
@@ -361,6 +366,7 @@ impl SynchroApp {
         let settings = Settings {
             address: self.settings.address.clone(),
             token: self.settings.token.clone(),
+            recipient_id: self.settings.recipient_id.clone(),
             auto_send: self.settings.auto_send,
             watch_folder: self.settings.watch_folder.clone(),
             watch_enabled: self.settings.watch_enabled,
@@ -391,7 +397,9 @@ impl SynchroApp {
 
     fn start(&mut self) {
         if self.busy || self.files.is_empty() { return; }
-        if let Err(e) = target_url(&self.settings.address) {
+        if let Err(e) = if self.settings.address.trim().starts_with("https://") {
+            internet::origin(&self.settings.address)
+        } else { target_url(&self.settings.address) } {
             self.status = e;
             return;
         }
@@ -404,6 +412,7 @@ impl SynchroApp {
         let files = self.files.clone(); // Remove each item only after Android confirms receipt.
         let settings = Settings {
             address: self.settings.address.clone(), token: self.settings.token.clone(),
+            recipient_id: self.settings.recipient_id.clone(),
             auto_send: self.settings.auto_send,
             watch_folder: self.settings.watch_folder.clone(),
             watch_enabled: self.settings.watch_enabled,
