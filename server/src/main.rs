@@ -347,6 +347,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/api/v1/transfers", post(api::create_transfer))
         .route("/api/v1/outbox", get(api::outbox))
         .route("/api/v1/transfers/{id}", get(api::get_transfer))
+        .route("/api/v1/transfers/{id}/chunks", get(api::chunk_status))
         .route("/api/v1/transfers/{id}/chunks/{index}", put(api::put_chunk))
         .route("/api/v1/transfers/{id}/finish", post(api::finish_transfer))
         .route("/api/v1/transfers/{id}/download", get(api::download))

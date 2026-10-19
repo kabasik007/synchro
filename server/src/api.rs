@@ -111,7 +111,7 @@ pub(crate) struct NewTransfer {
     sha256: String,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 pub(crate) struct TransferInfo {
     id: String,
     sender_id: String,
@@ -319,67 +319,127 @@ pub(crate) async fn put_chunk(
     write_result
 }
 
-pub(crate) async fn finish_transfer(
+
+#[derive(Serialize)]
+pub(crate) struct ChunkStatus {
+    transfer_id: String,
+    status: String,
+    chunk_size: usize,
+    chunk_count: i64,
+    uploaded_indices: Vec<u32>,
+}
+
+pub(crate) async fn chunk_status(
     AxumState(state): AxumState<State>,
     Path(id): Path<String>,
     headers: HeaderMap,
-) -> Result<Json<TransferInfo>, ApiError> {
+) -> Result<Json<ChunkStatus>, ApiError> {
     let sender = verify_device(&headers, &state)?;
     let id = safe_id(&id)?;
     let _guard = state.mutation_lock.lock().await;
     let transfer = active_transfer_for_sender(&state, &id, &sender)?;
-    if transfer.status == "ready" {
-        // A timed-out response may be retried; never assemble an already ready file.
-        return Ok(Json(transfer));
+    let mut uploaded_indices = Vec::new();
+    if transfer.status == "uploading" || transfer.status == "finalizing" {
+        let folder = state.config.storage.join("chunks").join(&id);
+        match fs::read_dir(folder).await {
+            Ok(mut entries) => {
+                while let Some(entry) = entries.next_entry().await.map_err(|_| ApiError::internal())? {
+                    let name = entry.file_name();
+                    let Some(name) = name.to_str() else { continue };
+                    let Some(num) = name.strip_suffix(".chunk") else { continue };
+                    let Ok(index) = num.parse::<u32>() else { continue };
+                    if num != format!("{index:04}") { continue; }
+                    if let Some(size) = expected_chunk_size(transfer.size_bytes, index) {
+                        let ty = entry.file_type().await.map_err(|_| ApiError::internal())?;
+                        if ty.is_file() && entry.metadata().await
+                            .map_err(|_| ApiError::internal())?.len() == size as u64 {
+                            uploaded_indices.push(index);
+                        }
+                    }
+                }
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => return Err(ApiError::internal()),
+        }
     }
-    if transfer.status != "uploading" {
-        return Err(ApiError::conflict("Transfer is not in uploading state"));
-    }
+    uploaded_indices.sort_unstable();
+    Ok(Json(ChunkStatus {
+        transfer_id: id, status: transfer.status,
+        chunk_size: CHUNK_BYTES, chunk_count: chunk_count(transfer.size_bytes),
+        uploaded_indices,
+    }))
+}
+
+pub(crate) async fn finish_transfer(
+    AxumState(state): AxumState<State>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+) -> Result<(StatusCode, Json<TransferInfo>), ApiError> {
+    let sender = verify_device(&headers, &state)?;
+    let id = safe_id(&id)?;
+    let transfer;
     {
+        let _guard = state.mutation_lock.lock().await;
+        transfer = active_transfer_for_sender(&state, &id, &sender)?;
+        if transfer.status == "ready" {
+            return Ok((StatusCode::OK, Json(transfer)));
+        }
+        if transfer.status == "finalizing" {
+            return Ok((StatusCode::ACCEPTED, Json(transfer)));
+        }
+        if transfer.status != "uploading" {
+            return Err(ApiError::conflict("Transfer cannot be finalized"));
+        }
         let db = state.db.lock().map_err(|_| ApiError::internal())?;
         let changed = db.execute(
             "UPDATE transfers SET status='finalizing'
              WHERE id=?1 AND sender_id=?2 AND status='uploading'",
             params![id, sender.id],
         ).map_err(|_| ApiError::internal())?;
-        if changed != 1 { return Err(ApiError::conflict("Transfer already finalizing")); }
+        if changed != 1 { return Err(ApiError::conflict("Transfer changed")); }
     }
-    let result = assemble_transfer(&state, &transfer).await;
-    match result {
-        Ok(()) => {
-            let published = {
-                let db = state.db.lock().map_err(|_| ApiError::internal())?;
-                db.execute(
-                    "UPDATE transfers SET status='ready' WHERE id=?1 AND status='finalizing'",
-                    [&id],
-                ).map_err(|_| ApiError::internal())?
-            };
-            if published != 1 {
-                let _ = fs::remove_file(state.config.storage.join("objects")
-                    .join(format!("{id}.blob"))).await;
-                return Err(ApiError::conflict("Transfer expired during finalization"));
+    // Do not keep HTTP open during potentially multi-gigabyte assembly.
+    // The worker re-acquires the file mutation gate before touching disk.
+    let worker_state = state.clone();
+    let worker_id = id;
+    let worker_transfer = transfer.clone();
+    tokio::spawn(async move {
+        let _guard = worker_state.mutation_lock.lock().await;
+        if let Err(err) = assemble_transfer(&worker_state, &worker_transfer).await {
+            error!("finalization {} failed: {}", worker_id, err.1);
+            let _ = fs::remove_file(worker_state.config.storage.join("objects")
+                .join(format!("{worker_id}.tmp"))).await;
+            let _ = fs::remove_file(worker_state.config.storage.join("objects")
+                .join(format!("{worker_id}.blob"))).await;
+            if let Ok(db) = worker_state.db.lock() {
+                let _ = db.execute("UPDATE transfers SET status='uploading'
+                    WHERE id=?1 AND status='finalizing'", [&worker_id]);
             }
-            let _ = fs::remove_dir_all(state.config.storage.join("chunks").join(&id)).await;
-            let _ = state.notifications.send(Signal {
-                event_type: "transfer_ready".into(),
-                device_id: transfer.recipient_id.clone(),
-                transfer_id: id,
-            });
-            Ok(Json(TransferInfo { status: "ready".into(), ..transfer }))
+            return;
         }
-        Err(err) => {
-            let _ = fs::remove_file(state.config.storage.join("objects").join(format!("{id}.tmp"))).await;
-            let _ = fs::remove_file(state.config.storage.join("objects").join(format!("{id}.blob"))).await;
-            let db = state.db.lock().map_err(|_| ApiError::internal())?;
-            let _ = db.execute(
-                "UPDATE transfers SET status='uploading' WHERE id=?1 AND status='finalizing'",
-                [&id],
-            );
-            Err(err)
+        let published = worker_state.db.lock().ok()
+            .and_then(|db| db.execute(
+                "UPDATE transfers SET status='ready'
+                 WHERE id=?1 AND status='finalizing' AND expires_at>?2",
+                params![worker_id, now()],
+            ).ok()).unwrap_or(0);
+        if published != 1 {
+            let _ = fs::remove_file(worker_state.config.storage.join("objects")
+                .join(format!("{worker_id}.blob"))).await;
+            return;
         }
-    }
+        let _ = fs::remove_dir_all(worker_state.config.storage.join("chunks")
+            .join(&worker_id)).await;
+        let _ = worker_state.notifications.send(Signal {
+            event_type: "transfer_ready".into(),
+            device_id: worker_transfer.recipient_id,
+            transfer_id: worker_id,
+        });
+    });
+    Ok((StatusCode::ACCEPTED, Json(TransferInfo {
+        status: "finalizing".into(), ..transfer
+    })))
 }
-
 async fn assemble_transfer(state: &State, transfer: &TransferInfo) -> Result<(), ApiError> {
     let path = state.config.storage.join("objects").join(format!("{}.tmp", transfer.id));
     let ready = state.config.storage.join("objects").join(format!("{}.blob", transfer.id));
