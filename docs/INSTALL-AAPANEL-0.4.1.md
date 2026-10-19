@@ -34,9 +34,9 @@ If you change domain later, update DNS/Cloudflare, Nginx server_name and TLS cer
 
 Connect through aaPanel Terminal or SSH:
 
-    cd /opt
-    sudo git clone https://github.com/kabasik007/synchro.git synchro-source
-    cd /opt/synchro-source/server
+    cd ~
+    git clone https://github.com/kabasik007/synchro.git synchro-source
+    cd ~/synchro-source/server
     cargo --version
     cargo test
     cargo clippy --all-targets
@@ -46,7 +46,7 @@ If cargo isn't available with your current Linux account, install a supported Ru
 
 The bootstrap requires a **precompiled** executable at server/target/release/synchro-server and an **already existing** aaPanel site directory. Return to the repository root and run:
 
-    cd /opt/synchro-source
+    cd ~/synchro-source
     sudo bash deploy/bootstrap-aapanel.sh disk.sitezilla.net
 
 The script:
