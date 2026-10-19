@@ -1,10 +1,12 @@
+> **Follow-up:** The stability fixes were implemented as [Synchro v0.3.1](RELEASE-0.3.1.md) after this audit. This document intentionally preserves the original v0.3 findings and line references; do not interpret them as unresolved in the updated source without checking the release notes.
+
 # Synchro v0.3.0 — Bug, reliability and security audit
 
 **Date:** 2026-10-19  
 **Scope:** `kabasik007/synchro`, `main`, baseline commit `ede0e9197cb35c109a6de78109dcb6d1e19a3460`  
 **Method:** static source review (Rust sender/UI/watcher, Kotlin receiver/UI, build scripts, protocol, manifest) plus relevant official Android and Gradle docs. **Not compiled or tested on Windows/Android in the audit environment.** No code changes made in this audit.
 
-**Status:** MVP architecture is usable, but not release-ready. Findings below are either **confirmed by source code** (logic/architectural defects) or **needs runtime validation** (platform-specific behavior). They are not claims of reproduced crashes.
+**Status (at audited v0.3 baseline):** MVP architecture is usable, but not release-ready. Findings below are either **confirmed by source code** (logic/architectural defects) or **needs runtime validation** (platform-specific behavior). They are not claims of reproduced crashes.
 
 ## P1 — high priority
 
