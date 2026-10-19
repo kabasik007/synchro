@@ -13,6 +13,7 @@ use std::time::{Duration, Instant};
 use std::net::IpAddr;
 
 mod ui;
+mod design;
 mod watch;
 mod internet;
 
