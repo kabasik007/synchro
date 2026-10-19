@@ -23,6 +23,8 @@ import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowInsets
+import android.widget.EditText
+import android.text.InputType
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
@@ -104,12 +106,14 @@ class MainActivity : Activity() {
         tokenCard(content)
         gap(content, 12)
         controls(content)
+        gap(content, 14)
+        internetCard(content)
         gap(content, 18)
         historyCard(content)
         gap(content, 16)
         label(content, "Папка: Download/Synchro/Debug", 12f, muted)
         gap(content, 6)
-        label(content, "Для доступу через інтернет використовуй Tailscale. Не відкривай порт 8765 назовні.", 12f, muted)
+        label(content, "Internet Mode працює через HTTPS на сервері без відкриття порту 8765. Локальний режим Wi-Fi/Tailscale залишається.", 12f, muted)
         gap(content, 25)
     }
 
@@ -217,6 +221,48 @@ class MainActivity : Activity() {
             refresh()
             toast("Список оновлено")
         }, LinearLayout.LayoutParams(-1, -2))
+    }
+
+    private fun internetCard(parent: LinearLayout) {
+        val card = panel(parent, Color.WHITE, border)
+        label(card, "☁ INTERNET MODE · HTTPS", 17f, ink, true)
+        gap(card, 7)
+        label(card, "Введи адресу свого Synchro сервера та токен Android, створений в адмінці.", 12f, muted)
+        val prefs = getSharedPreferences("internet_mode", MODE_PRIVATE)
+        fun field(hint: String, initial: String, password: Boolean = false): EditText =
+            EditText(this).also {
+                it.hint = hint
+                it.setText(initial)
+                it.textSize = 14f
+                it.setSingleLine(true)
+                it.inputType = InputType.TYPE_CLASS_TEXT or
+                    if (password) InputType.TYPE_TEXT_VARIATION_PASSWORD else InputType.TYPE_TEXT_VARIATION_NORMAL
+                card.addView(it, LinearLayout.LayoutParams(-1, -2))
+            }
+        val server = field("https://disk.sitezilla.net", prefs.getString("server", "") ?: "")
+        val token = field("64-символьний токен пристрою", prefs.getString("token", "") ?: "", true)
+        val e2ee = field("E2EE ключ (необов'язково, для шифрованих файлів)", "", true)
+        gap(card, 10)
+        val message = label(card, "Синхронізація запускається вручну. Ключ E2EE не зберігається.", 12f, muted)
+        gap(card, 10)
+        val run = button("⇩  Отримати файли через інтернет", true) {
+            val address = server.text.toString().trim()
+            val secret = token.text.toString().trim()
+            val key = e2ee.text.toString().trim()
+            prefs.edit().putString("server", address).putString("token", secret).apply()
+            message.text = "Підключення до сервера…"
+            Thread {
+                try {
+                    val result = InternetRelay.receive(applicationContext, address, secret, key) {
+                        progress -> runOnUiThread { message.text = progress }
+                    }
+                    runOnUiThread { message.text = result; lastList = ""; refresh() }
+                } catch (e: Exception) {
+                    runOnUiThread { message.text = "Помилка Internet Mode: " + e.message }
+                }
+            }.start()
+        }
+        card.addView(run, LinearLayout.LayoutParams(-1, -2))
     }
 
     private fun historyCard(parent: LinearLayout) {
