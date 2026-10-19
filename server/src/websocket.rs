@@ -3,8 +3,8 @@
 use crate::{verify_device, State};
 use axum::{
     extract::{ws::{Message, WebSocket, WebSocketUpgrade}, State as AxumState},
-    http::{header, HeaderMap, HeaderValue},
-    response::Response,
+    http::{header, HeaderMap, HeaderValue, StatusCode},
+    response::{IntoResponse, Response},
 };
 use serde::Deserialize;
 use serde_json::json;
@@ -20,13 +20,35 @@ struct Handshake {
 pub(crate) async fn connect(
     ws: WebSocketUpgrade,
     AxumState(state): AxumState<State>,
+    headers: HeaderMap,
 ) -> Response {
+    // Browsers send Origin. Validate it against the configured public site.
+    // Native clients without Origin must still authenticate in the first frame.
+    if let Some(origin) = headers.get(header::ORIGIN) {
+        let supplied = origin.to_str().unwrap_or("");
+        let stored: Option<String> = {
+            let Ok(db) = state.db.lock() else {
+                return StatusCode::SERVICE_UNAVAILABLE.into_response();
+            };
+            db.query_row("SELECT value FROM system_settings WHERE key='public_url'", [],
+                |r| r.get(0)).ok()
+        };
+        if stored.as_deref() != Some(supplied) {
+            return StatusCode::FORBIDDEN.into_response();
+        }
+    }
+    // Reserve before switching protocols; unauthenticated connections also cost a slot.
+    let permit = match state.ws_slots.clone().try_acquire_owned() {
+        Ok(value) => value,
+        Err(_) => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
+    };
     ws.max_message_size(2048)
         .max_frame_size(2048)
-        .on_upgrade(move |socket| serve(socket, state))
+        .on_upgrade(move |socket| serve(socket, state, permit))
 }
 
-async fn serve(mut socket: WebSocket, state: State) {
+async fn serve(mut socket: WebSocket, state: State,
+    _slot: tokio::sync::OwnedSemaphorePermit) {
     let first = match tokio::time::timeout(Duration::from_secs(8), socket.recv()).await {
         Ok(Some(Ok(Message::Text(body)))) => body,
         _ => return,
