@@ -559,6 +559,17 @@ mod tests {
         assert!(target_url("http://evil.com:8765/").is_err());
     }
     #[test]
+    fn pending_queue_serialization_preserves_multiple_build_paths() {
+        let paths = vec![
+            PathBuf::from(r"M:\projects\alpha\app-debug.apk"),
+            PathBuf::from(r"M:\projects\beta\app-debug.apk"),
+        ];
+        let data = serde_json::to_vec_pretty(&paths).unwrap();
+        let parsed: Vec<PathBuf> = serde_json::from_slice(&data).unwrap();
+        assert_eq!(parsed, paths);
+    }
+
+    #[test]
     fn decode_device_health() {
         let info: DeviceInfo = serde_json::from_str(
             r#"{"message":"ready","device":"Google Pixel 8","appVersion":"0.3.0","sdk":35}"#
