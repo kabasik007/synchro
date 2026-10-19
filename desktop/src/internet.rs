@@ -4,6 +4,8 @@ use crate::{DeviceInfo, Event, Settings, MAX_SIZE, hex_digest};
 use reqwest::blocking::Client;
 use serde::Deserialize;
 use serde_json::json;
+use sha2::{Digest, Sha256};
+use std::collections::HashMap;
 use std::{fs::File, io::{Read, Seek, SeekFrom}, path::{Path, PathBuf},
           sync::mpsc::Sender, time::{Duration, SystemTime, UNIX_EPOCH}};
 const CHUNK: u64 = 8 * 1024 * 1024;
@@ -19,7 +21,30 @@ struct RelayTransfer {
 #[derive(Deserialize)]
 struct Created { transfer: RelayTransfer }
 #[derive(Deserialize)]
-struct ChunkState { status: String, chunk_count: u64, uploaded_indices: Vec<u32> }
+struct ChunkState {
+    status: String,
+    chunk_count: u64,
+    uploaded_indices: Vec<u32>,
+    #[serde(default)]
+    uploaded_chunks: Vec<ChunkDigest>,
+}
+#[derive(Deserialize)]
+struct ChunkDigest { index: u32, sha256: String }
+
+fn chunk_digest(path: &Path, offset: u64, length: u64) -> Result<String, String> {
+    let mut file = File::open(path).map_err(|e|e.to_string())?;
+    file.seek(SeekFrom::Start(offset)).map_err(|e|e.to_string())?;
+    let mut limited = file.take(length);
+    let mut digest = Sha256::new();
+    let mut buffer = [0u8; 64 * 1024];
+    loop {
+        let n = limited.read(&mut buffer).map_err(|e|e.to_string())?;
+        if n == 0 { break; }
+        digest.update(&buffer[..n]);
+    }
+    if limited.limit() != 0 { return Err("Source file shortened during hashing".into()); }
+    Ok(format!("{:x}", digest.finalize()))
+}
 
 pub(super) fn origin(address: &str) -> Result<String, String> {
     let value=address.trim().trim_end_matches('/');
@@ -59,6 +84,13 @@ pub(super) fn probe(settings: &Settings) -> Result<DeviceInfo, String> {
         .bearer_auth(&settings.token).send().map_err(|e| e.to_string())?;
     if !response.status().is_success(){return Err(error(response));}
     let self_device: RelayDevice=response.json().map_err(|e| e.to_string())?;
+    let recipient = settings.recipient_id.trim();
+    let devices: Vec<RelayDevice> = get_json(
+        &c, &format!("{}/api/v1/devices", origin(&settings.address)?), &settings.token
+    )?;
+    if recipient == self_device.id || !devices.iter().any(|device| device.id == recipient) {
+        return Err("Relay працює, але одержувача не вибрано або пристрій відкликано".into());
+    }
     Ok(DeviceInfo {
         device: format!("Synchro Internet · {}",self_device.name),
         app_version: "0.5.0".into(), sdk: 0,
@@ -127,11 +159,27 @@ pub(super) fn send(
         let url=format!("{base}/api/v1/transfers/{id}");
         let checkpoint: ChunkState=get_json(&c,&format!("{url}/chunks"),token)?;
         if checkpoint.status=="uploading" {
-            let have: std::collections::HashSet<u32>=checkpoint.uploaded_indices.into_iter().collect();
+            let hashes: HashMap<u32, String> = checkpoint.uploaded_chunks.into_iter()
+                .map(|item| (item.index, item.sha256)).collect();
+            if !checkpoint.uploaded_indices.is_empty() && hashes.is_empty() {
+                return Err("Relay must be updated to Synchro v0.5.1 for safe resume".into());
+            }
             for n in 0..checkpoint.chunk_count {
                 let offset=n*CHUNK;
                 let length=(meta.len()-offset).min(CHUNK);
-                if !have.contains(&(n as u32)) {
+                let needs_upload = if checkpoint.uploaded_indices.contains(&(n as u32)) {
+                    let same = hashes.get(&(n as u32))
+                        .map(|hash| chunk_digest(&path, offset, length)
+                            .map(|local| local.eq_ignore_ascii_case(hash)))
+                        .transpose()?.unwrap_or(false);
+                    if !same {
+                        let result = c.delete(format!("{url}/chunks/{n}"))
+                            .bearer_auth(token).send().map_err(|e|e.to_string())?;
+                        if !result.status().is_success(){return Err(error(result));}
+                    }
+                    !same
+                } else { true };
+                if needs_upload {
                     if !unchanged(&path,&meta) {return Err(format!("{name}: source changed during upload"));}
                     let mut f=File::open(&path).map_err(|e|e.to_string())?;
                     f.seek(SeekFrom::Start(offset)).map_err(|e|e.to_string())?;
@@ -150,13 +198,13 @@ pub(super) fn send(
         }
         ready(&c,&base,token,&id)?;
         if unchanged(&path,&meta) {
-            tx.send(Event::FileSent(path.clone())).ok();
+            tx.send(Event::RelayStored(path.clone())).ok();
         } else {
             tx.send(Event::Status(format!("{name}: changed during transfer, remains queued"))).ok();
         }
         sent+=1;
     }
-    Ok(format!("{sent} file(s) uploaded to Synchro Internet Mode (recipient inbox)"))
+    Ok(format!("{sent} file(s) stored on Relay. Android delivery still pending."))
 }
 fn unchanged(path:&Path, original:&std::fs::Metadata)->bool {
     path.metadata().map(|now| now.len()==original.len() &&

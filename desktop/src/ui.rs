@@ -252,7 +252,8 @@ fn queue_card(ui: &mut egui::Ui, app: &mut SynchroApp) {
                         let glyph = if name.to_ascii_lowercase().ends_with(".apk") { "◆" } else { "▤" };
                         ui.label(RichText::new(glyph).color(BLUE).size(23.0));
                         ui.vertical(|ui| {
-                            ui.label(RichText::new(name).color(LIGHT).size(13.0));
+                            ui.add(egui::Label::new(RichText::new(&name).color(LIGHT).size(13.0))
+                                .truncate()).on_hover_text(&name);
                             caption(ui, file_size(bytes));
                             if app.current_path.as_ref() == Some(file) {
                                 ui.add(egui::ProgressBar::new(app.progress)
@@ -325,9 +326,13 @@ fn transfer(ui: &mut egui::Ui, app: &mut SynchroApp) {
             title(ui, "Останні відправлення", 16.0);
             for item in app.history.iter().take(3) {
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new("✓").color(GREEN));
-                    ui.label(RichText::new(&item.name).color(LIGHT).size(13.0));
-                    caption(ui, file_size(item.size));
+                    ui.label(RichText::new(if item.relay_stored { "☁" } else { "✓" })
+                        .color(if item.relay_stored { BLUE } else { GREEN }));
+                    ui.add(egui::Label::new(RichText::new(&item.name).color(LIGHT).size(13.0))
+                        .truncate()).on_hover_text(&item.name);
+                    caption(ui, if item.relay_stored {
+                        format!("{} · на Relay, не доставлено", file_size(item.size))
+                    } else { format!("{} · прийнято Android", file_size(item.size)) });
                 });
             }
         });

@@ -144,6 +144,7 @@ struct DeviceInfo {
 struct SentItem {
     name: String,
     size: u64,
+    relay_stored: bool,
 }
 
 #[derive(Debug)]
@@ -152,10 +153,11 @@ enum Event {
     Progress(PathBuf, u64, u64),
     Finished(Result<String, String>),
     FileSent(PathBuf),
+    RelayStored(PathBuf),
     FilesPicked(Vec<PathBuf>),
     FolderPicked(PathBuf),
     WatchFile(PathBuf),
-    Connected(String, String, Result<DeviceInfo, String>),
+    Connected(String, String, String, Result<DeviceInfo, String>),
 }
 
 struct ProgressFile {
@@ -295,7 +297,7 @@ struct SynchroApp {
     page: ui::Page,
     connection: ui::Connection,
     checking: bool,
-    last_checked_pair: Option<(String, String)>,
+    last_checked_pair: Option<(String, String, String)>,
     show_token: bool,
     show_manual_path: bool,
     history: Vec<SentItem>,
@@ -363,7 +365,7 @@ impl SynchroApp {
         self.last_check = Instant::now();
         self.checking = true;
         self.connection = ui::Connection::Unknown;
-        self.last_checked_pair = Some((self.settings.address.clone(), self.settings.token.clone()));
+        self.last_checked_pair = Some((self.settings.address.clone(), self.settings.token.clone(), self.settings.recipient_id.clone()));
         let settings = Settings {
             address: self.settings.address.clone(),
             token: self.settings.token.clone(),
@@ -375,7 +377,7 @@ impl SynchroApp {
         let tx = self.tx.clone();
         std::thread::spawn(move || {
             let result = check_receiver(&settings);
-            let _ = tx.send(Event::Connected(settings.address, settings.token, result));
+            let _ = tx.send(Event::Connected(settings.address, settings.token, settings.recipient_id, result));
         });
     }
 
@@ -456,9 +458,18 @@ impl eframe::App for SynchroApp {
                 Event::FileSent(path) => {
                     if let Some(name) = path.file_name().and_then(|s| s.to_str()) {
                         let size = path.metadata().map(|m| m.len()).unwrap_or(0);
-                        self.history.insert(0, SentItem { name: name.to_owned(), size });
+                        self.history.insert(0, SentItem { name: name.to_owned(), size, relay_stored: false });
                         self.history.truncate(15);
                     }
+                    self.files.retain(|f| f != &path);
+                }
+                Event::RelayStored(path) => {
+                    if let Some(name) = path.file_name().and_then(|s| s.to_str()) {
+                        let size = path.metadata().map(|m| m.len()).unwrap_or(0);
+                        self.history.insert(0, SentItem { name: name.to_owned(), size, relay_stored: true });
+                        self.history.truncate(15);
+                    }
+                    // Mark as stored on the relay, never as delivered to Android.
                     self.files.retain(|f| f != &path);
                 }
                 Event::FolderPicked(folder) => {
@@ -477,9 +488,10 @@ impl eframe::App for SynchroApp {
                         new_files = true;
                     }
                 }
-                Event::Connected(address, token, result) => {
+                Event::Connected(address, token, recipient_id, result) => {
                     self.checking = false;
-                    if self.settings.address == address && self.settings.token == token {
+                    if self.settings.address == address && self.settings.token == token
+                        && self.settings.recipient_id == recipient_id {
                         self.connection = match result {
                             Ok(info) => ui::Connection::Online(info),
                             Err(e) => ui::Connection::Offline(e),
@@ -491,8 +503,9 @@ impl eframe::App for SynchroApp {
             }
         }
         // A new IP or pairing token invalidates an older successful connection check.
-        if let Some((address, token)) = &self.last_checked_pair {
-            if self.settings.address != *address || self.settings.token != *token {
+        if let Some((address, token, recipient_id)) = &self.last_checked_pair {
+            if self.settings.address != *address || self.settings.token != *token
+                || self.settings.recipient_id != *recipient_id {
                 self.connection = ui::Connection::Unknown;
             }
         }
