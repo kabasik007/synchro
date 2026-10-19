@@ -8,7 +8,7 @@ if [[ "$EUID" -ne 0 ]]; then
   echo "Run as root: sudo bash deploy/bootstrap-aapanel.sh disk.sitezilla.net" >&2
   exit 1
 fi
-DOMAIN="$1"
+DOMAIN="${1:-}"
 if [[ ! "$DOMAIN" =~ ^[a-zA-Z0-9]([a-zA-Z0-9.-]{0,251}[a-zA-Z0-9])?$ ]] ||
    [[ "$DOMAIN" == *..* ]]; then
   echo "Provide a hostname, e.g. disk.sitezilla.net" >&2
