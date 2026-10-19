@@ -237,6 +237,10 @@ fn send_files(files: Vec<PathBuf>, settings: Settings, tx: Sender<Event>) -> Res
         }
         let _ = tx.send(Event::Status(format!("Checking SHA-256: {name}")));
         let sha256 = hex_digest(&path)?;
+        let checked = path.metadata().map_err(|e| e.to_string())?;
+        if checked.len() != metadata.len() || checked.modified().ok() != metadata.modified().ok() {
+            return Err(format!("{name}: build output changed while computing SHA-256; retry after build completes"));
+        }
         let file = File::open(&path).map_err(|e| e.to_string())?;
         let reader = ProgressFile {
             file, path: path.clone(), sent: 0, total: metadata.len(), events: tx.clone(), last_report: 0,
@@ -256,7 +260,19 @@ fn send_files(files: Vec<PathBuf>, settings: Settings, tx: Sender<Event>) -> Res
             return Err(format!("{name}: Android rejected upload ({code}): {reason}"));
         }
         sent_files += 1;
-        let _ = tx.send(Event::FileSent(path.clone()));
+        // Android confirmed THIS byte stream. A build may have overwritten the same
+        // app-debug.apk path during upload; leave the newer version queued.
+        let still_same = path.metadata().map(|current| {
+            current.len() == metadata.len() &&
+            current.modified().ok() == metadata.modified().ok()
+        }).unwrap_or(false);
+        if still_same {
+            let _ = tx.send(Event::FileSent(path.clone()));
+        } else {
+            let _ = tx.send(Event::Status(format!(
+                "{name}: a new build appeared during upload; newest file remains in queue"
+            )));
+        }
     }
     Ok(format!("Sent {sent_files} file(s) to Android · Download/Synchro/Debug"))
 }
