@@ -228,6 +228,63 @@ pub(crate) async fn update_origin(
     })))
 }
 
+#[derive(Serialize)]
+pub(crate) struct ServerStats {
+    pub devices: i64,
+    pub uploading: i64,
+    pub ready: i64,
+    pub delivered: i64,
+    pub reserved_bytes: i64,
+    pub quota_bytes: i64,
+    pub free_bytes: u64,
+    pub ttl_hours: i64,
+    pub public_url: Option<String>,
+}
+
+pub(crate) async fn stats(
+    AxumState(state): AxumState<State>,
+    headers: HeaderMap,
+) -> Result<Json<ServerStats>, ApiError> {
+    verify_admin(&headers, &state)?;
+    let (devices, uploading, ready, delivered, reserved_bytes, public_url) = {
+        let db = state.db.lock().map_err(|_| ApiError::internal())?;
+        let devices: i64 = db.query_row(
+            "SELECT COUNT(*) FROM devices WHERE revoked=0", [], |r| r.get(0),
+        ).map_err(|_| ApiError::internal())?;
+        let uploading: i64 = db.query_row(
+            "SELECT COUNT(*) FROM transfers WHERE status IN ('uploading','finalizing') AND expires_at>?1",
+            [now()], |r| r.get(0),
+        ).map_err(|_| ApiError::internal())?;
+        let ready: i64 = db.query_row(
+            "SELECT COUNT(*) FROM transfers WHERE status='ready' AND expires_at>?1",
+            [now()], |r| r.get(0),
+        ).map_err(|_| ApiError::internal())?;
+        let delivered: i64 = db.query_row(
+            "SELECT COUNT(*) FROM transfers WHERE status='delivered'", [],
+            |r| r.get(0),
+        ).map_err(|_| ApiError::internal())?;
+        let reserved_bytes: i64 = db.query_row(
+            "SELECT COALESCE(SUM(CASE WHEN status IN ('uploading','finalizing') THEN 2*size_bytes
+                ELSE size_bytes END),0) FROM transfers
+             WHERE status IN ('uploading','finalizing','ready') AND expires_at>?1",
+            [now()], |r| r.get(0),
+        ).map_err(|_| ApiError::internal())?;
+        let public_url = db.query_row(
+            "SELECT value FROM system_settings WHERE key='public_url'", [],
+            |r| r.get::<_, String>(0),
+        ).optional().map_err(|_| ApiError::internal())?;
+        (devices, uploading, ready, delivered, reserved_bytes, public_url)
+    };
+    Ok(Json(ServerStats {
+        devices, uploading, ready, delivered, reserved_bytes,
+        quota_bytes: state.config.storage_quota,
+        free_bytes: fs2::available_space(&state.config.storage)
+            .map_err(|_| ApiError::internal())?,
+        ttl_hours: state.config.ttl_hours,
+        public_url,
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
