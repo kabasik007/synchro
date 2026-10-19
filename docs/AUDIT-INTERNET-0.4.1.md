@@ -35,6 +35,10 @@
 | IN-19 | P2 / VPS capacity | Even with quota reservation, on-disk operational logs, DB WAL, transient buffers and other aaPanel websites share storage. Keep generous headroom; do not set quota equal to total disk space. |
 | IN-20 | P3 / product UX | Device token enrollment is administrator-driven, not automatic QR pairing; user-friendly phone/PC native discovery, client-side encryption and FCM are later milestones. |
 
+## Built-in operational analytics
+
+The administrator-only `GET /api/v1/admin/stats` endpoint now reports active devices, uploads, ready deliveries, delivered metadata rows, logical reserved storage, quota, real free disk, retention and saved public URL. The main web UI includes an on-demand panel for this data. It is **not a third-party tracking integration**, and no visit/personal usage analytics are collected automatically.
+
 ## Domain and aaPanel architecture
 
 The domain is a deployment address, not a hard-coded app identity. The browser uses **relative same-origin API paths** and a WebSocket URL based on the currently opened hostname. Nginx CSP now follows the current Host header instead of fixing the old domain. The setup wizard can store a public_url in SQLite; a post-install admin API and UI can change that stored address.
