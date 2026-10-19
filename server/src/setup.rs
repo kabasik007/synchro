@@ -44,6 +44,7 @@ pub(crate) struct CheckReport {
     pub storage_writable: bool,
     pub device_count: i64,
     pub quota_bytes: i64,
+    pub free_bytes: u64,
     pub ttl_hours: i64,
     pub server_url: Option<String>,
     pub installed: bool,
@@ -85,6 +86,8 @@ pub(crate) async fn check(
         storage_writable: writable,
         device_count,
         quota_bytes: state.config.storage_quota,
+        free_bytes: fs2::available_space(&state.config.storage)
+            .map_err(|_| ApiError::internal())?,
         ttl_hours: state.config.ttl_hours,
         server_url,
         installed,
