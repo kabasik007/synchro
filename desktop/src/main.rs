@@ -400,6 +400,31 @@ impl SynchroApp {
         });
     }
 
+    fn queue_watch_folder(&mut self) {
+        let folder=Path::new(&self.settings.watch_folder);
+        if !folder.is_dir() {
+            self.status="Спочатку вибери папку, що існує".into();
+            return;
+        }
+        let Ok(entries)=std::fs::read_dir(folder) else {
+            self.status="Не вдалося відкрити вибрану папку".into();
+            return;
+        };
+        let mut count=0usize;
+        for entry in entries.flatten().take(1000) {
+            let path=entry.path();
+            let Ok(meta)=std::fs::symlink_metadata(&path) else { continue };
+            if meta.is_file() && !meta.file_type().is_symlink()
+                && watch::eligible(&path, meta.len(), self.settings.watch_all_files)
+                && self.files.len()<500 && !self.files.contains(&path) {
+                self.files.push(path);
+                count+=1;
+            }
+        }
+        self.page=ui::Page::Transfer;
+        self.status=format!("До черги додано {count} файлів із папки. Перевір і натисни «Відправити».");
+    }
+
     fn choose_receive_folder(&mut self) {
         let tx=self.tx.clone();
         std::thread::spawn(move || {

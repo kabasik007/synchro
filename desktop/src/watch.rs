@@ -16,7 +16,7 @@ pub struct FolderWatch {
     stop: Option<Arc<AtomicBool>>,
 }
 
-fn eligible(path: &Path, size: u64, all_files: bool) -> bool {
+pub(crate) fn eligible(path: &Path, size: u64, all_files: bool) -> bool {
     if size == 0 || size > crate::MAX_SIZE {
         return false;
     }

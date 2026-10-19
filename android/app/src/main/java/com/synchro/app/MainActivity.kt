@@ -300,6 +300,7 @@ class MainActivity : Activity() {
             prefs.getString("server", internet.getString("server", "")) ?: "")
         val token = field("Токен Android (64 hex)",
             prefs.getString("token", internet.getString("token", "")) ?: "")
+        token.inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
         val recipient = field("UUID Windows у Relay", prefs.getString("recipient", "") ?: "")
         val consent = CheckBox(this).apply {
             text = "Розумію: через HTTPS, але файли на сервері поки БЕЗ E2EE"

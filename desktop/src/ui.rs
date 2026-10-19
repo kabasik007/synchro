@@ -428,6 +428,11 @@ fn settings_page(ui: &mut egui::Ui, app: &mut SynchroApp) {
                 .desired_width(input_width).hint_text(r"M:\projects\SynchroShare"));
             if ui.small_button("Вибрати папку").clicked() { app.choose_watch_folder(); }
         });
+        ui.add_space(6.0);
+        if ui.small_button("Додати наявні файли з цієї папки до черги").clicked() {
+            app.queue_watch_folder();
+        }
+        caption(ui, "Обмеження: лише файли в корені вибраної папки, без підпапок; до 500 елементів у черзі.");
         if app.settings.watch_enabled && !std::path::Path::new(&app.settings.watch_folder).is_dir() {
             ui.label(RichText::new("Вибери наявну папку перед увімкненням відстеження.")
                 .color(c(249, 131, 107)).size(12.0));
