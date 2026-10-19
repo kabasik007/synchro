@@ -23,7 +23,7 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use subtle::ConstantTimeEq;
-use tokio::sync::{broadcast, Semaphore};
+use tokio::sync::{broadcast, Mutex as AsyncMutex, Semaphore};
 use tower_http::limit::RequestBodyLimitLayer;
 use tracing::{error, info};
 
@@ -45,6 +45,11 @@ pub(crate) struct State {
     pub config: Arc<Config>,
     pub notifications: broadcast::Sender<Signal>,
     pub chunk_slots: Arc<Semaphore>,
+    // One mutation gate keeps PUT, finish, ACK, and expiry cleanup consistent.
+    // Intentionally conservative for a small, single-owner VPS.
+    pub mutation_lock: Arc<AsyncMutex<()>>,
+    pub ws_slots: Arc<Semaphore>,
+    pub download_slots: Arc<Semaphore>,
 }
 
 #[derive(Clone, Serialize)]
@@ -204,12 +209,14 @@ fn init_db(path: &Path) -> Result<Connection, Box<dyn std::error::Error>> {
 }
 
 pub(crate) async fn prune_expired(state: &State) -> Result<usize, ApiError> {
+    // Guard the entire metadata + file removal operation against concurrent writes.
+    let _guard = state.mutation_lock.lock().await;
     let expired: Vec<String> = {
         let db = state.db.lock().map_err(|_| ApiError::internal())?;
         let mut statement = db.prepare(
-            "SELECT id FROM transfers WHERE expires_at <= ?1 OR status = 'delivered'"
+            "SELECT id FROM transfers WHERE expires_at <= ?1 OR (status = 'delivered' AND delivered_at <= ?2)"
         ).map_err(|_| ApiError::internal())?;
-        let rows = statement.query_map([now()], |row| row.get::<_, String>(0))
+        let rows = statement.query_map(params![now(), now() - 3600], |row| row.get::<_, String>(0))
             .map_err(|_| ApiError::internal())?;
         rows.filter_map(Result::ok).collect()
     };
@@ -297,6 +304,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         config: Arc::new(Config { storage, admin_token, storage_quota, ttl_hours }),
         notifications,
         chunk_slots: Arc::new(Semaphore::new(3)),
+        mutation_lock: Arc::new(AsyncMutex::new(())),
+        ws_slots: Arc::new(Semaphore::new(32)),
+        download_slots: Arc::new(Semaphore::new(4)),
     };
     // Periodic cleanup; no direct public admin access required.
     let cleaning = state.clone();
