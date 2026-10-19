@@ -206,7 +206,8 @@ fn init_db(path: &Path) -> Result<Connection, Box<dyn std::error::Error>> {
     let has_revoked = {
         let mut statement = db.prepare("PRAGMA table_info(devices)")?;
         let names = statement.query_map([], |row| row.get::<_, String>(1))?;
-        names.filter_map(Result::ok).any(|name| name == "revoked")
+        let found = names.filter_map(Result::ok).any(|name| name == "revoked");
+        found
     };
     if !has_revoked {
         db.execute_batch(
@@ -216,7 +217,8 @@ fn init_db(path: &Path) -> Result<Connection, Box<dyn std::error::Error>> {
     let has_encrypted = {
         let mut statement = db.prepare("PRAGMA table_info(transfers)")?;
         let names = statement.query_map([], |row| row.get::<_, String>(1))?;
-        names.filter_map(Result::ok).any(|name| name == "encrypted")
+        let found = names.filter_map(Result::ok).any(|name| name == "encrypted");
+        found
     };
     if !has_encrypted {
         db.execute_batch("ALTER TABLE transfers ADD COLUMN encrypted INTEGER NOT NULL DEFAULT 0;")?;
