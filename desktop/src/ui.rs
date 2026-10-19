@@ -439,6 +439,28 @@ fn settings_page(ui: &mut egui::Ui, app: &mut SynchroApp) {
     });
     ui.add_space(12.0);
     card(ui, |ui| {
+        title(ui, "Резервні копії з Android → ПК", 18.0);
+        caption(ui, "Завантаження з HTTPS Relay на цей комп'ютер. Файли перевіряються SHA-256.");
+        caption(ui, "Оригінали не видаляються. Шифровані E2EE файли залишаються у вхідних.");
+        ui.add_space(8.0);
+        ui.horizontal(|ui| {
+            ui.add(egui::TextEdit::singleline(&mut app.settings.receive_folder)
+                .hint_text(r"D:\SynchroBackup")
+                .desired_width((ui.available_width()-165.0).max(140.0)));
+            if ui.small_button("Вибрати папку").clicked() { app.choose_receive_folder(); }
+        });
+        ui.checkbox(&mut app.settings.auto_receive,
+            "Автоматично перевіряти вхідні кожні 60 секунд (поки Synchro відкритий)");
+        ui.horizontal(|ui| {
+            if ui.add_enabled(!app.receiving,
+                solid_button(if app.receiving { "Перевіряємо…" } else { "Отримати файли", }, true, 180.0)
+            ).clicked() { app.receive_inbox(); }
+            if ui.small_button("Зберегти").clicked() { app.persist_settings(); }
+        });
+        caption(ui, "Працює лише з HTTPS Internet Mode. Зашифровані файли вимагають майбутнього E2EE-клієнта Windows.");
+    });
+    ui.add_space(12.0);
+    card(ui, |ui| {
         title(ui, "Безпека", 18.0);
         caption(ui, "Код сполучення зберігається локально у профілі Windows.");
         caption(ui, "LAN: HTTP. Internet: HTTPS із перевіркою SHA-256. Windows E2EE ще в розробці.");

@@ -16,6 +16,7 @@ mod ui;
 mod design;
 mod watch;
 mod internet;
+mod inbox;
 
 const MAX_SIZE: u64 = 2 * 1024 * 1024 * 1024;
 
@@ -33,13 +34,17 @@ struct Settings {
     watch_enabled: bool,
     #[serde(default)]
     watch_all_files: bool,
+    #[serde(default)]
+    receive_folder: String,
+    #[serde(default)]
+    auto_receive: bool,
 }
 
 fn default_auto_send() -> bool { true }
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { address: String::new(), token: String::new(), recipient_id: String::new(), auto_send: true, watch_folder: String::new(), watch_enabled: false, watch_all_files: false }
+        Self { address: String::new(), token: String::new(), recipient_id: String::new(), auto_send: true, watch_folder: String::new(), watch_enabled: false, watch_all_files: false, receive_folder: String::new(), auto_receive: false }
     }
 }
 
@@ -156,6 +161,8 @@ enum Event {
     Finished(Result<String, String>),
     FileSent(PathBuf),
     RelayStored(PathBuf),
+    InboxFinished(Result<String, String>),
+    ReceiveFolderPicked(PathBuf),
     FilesPicked(Vec<PathBuf>),
     FolderPicked(PathBuf),
     WatchFile(PathBuf),
@@ -299,6 +306,8 @@ struct SynchroApp {
     page: ui::Page,
     connection: ui::Connection,
     checking: bool,
+    receiving: bool,
+    last_inbox_poll: Instant,
     last_checked_pair: Option<(String, String, String)>,
     show_token: bool,
     show_manual_path: bool,
@@ -323,7 +332,9 @@ impl Default for SynchroApp {
             status: "Pair Android, then drop APK/ZIP files here".into(),
             progress: 0.0, busy: false, tx, rx,
             page: ui::Page::default(), connection: ui::Connection::default(),
-            checking: false, last_checked_pair: None,
+            checking: false, receiving: false,
+            last_inbox_poll: Instant::now() - Duration::from_secs(90),
+            last_checked_pair: None,
             show_token: false, show_manual_path: false,
             history: Vec::new(), current_path: None,
             watcher: watch::FolderWatch::default(),
@@ -379,11 +390,40 @@ impl SynchroApp {
             watch_folder: self.settings.watch_folder.clone(),
             watch_enabled: self.settings.watch_enabled,
             watch_all_files: self.settings.watch_all_files,
+            receive_folder: self.settings.receive_folder.clone(),
+            auto_receive: self.settings.auto_receive,
         };
         let tx = self.tx.clone();
         std::thread::spawn(move || {
             let result = check_receiver(&settings);
             let _ = tx.send(Event::Connected(settings.address, settings.token, settings.recipient_id, result));
+        });
+    }
+
+    fn choose_receive_folder(&mut self) {
+        let tx=self.tx.clone();
+        std::thread::spawn(move || {
+            if let Some(folder)=rfd::FileDialog::new()
+                .set_title("Synchro: куди зберігати резервні копії")
+                .pick_folder() {
+                let _=tx.send(Event::ReceiveFolderPicked(folder));
+            }
+        });
+    }
+
+    fn receive_inbox(&mut self) {
+        if self.receiving { return; }
+        if !inbox::is_ready(&self.settings) {
+            self.status="Налаштуй HTTPS, токен і папку приймання на ПК".into();
+            return;
+        }
+        self.receiving=true;
+        self.last_inbox_poll=Instant::now();
+        let settings=self.settings.clone();
+        let tx=self.tx.clone();
+        std::thread::spawn(move || {
+            let result=inbox::receive(&settings);
+            let _=tx.send(Event::InboxFinished(result));
         });
     }
 
@@ -428,6 +468,8 @@ impl SynchroApp {
             watch_folder: self.settings.watch_folder.clone(),
             watch_enabled: self.settings.watch_enabled,
             watch_all_files: self.settings.watch_all_files,
+            receive_folder: self.settings.receive_folder.clone(),
+            auto_receive: self.settings.auto_receive,
         };
         let tx = self.tx.clone();
         std::thread::spawn(move || {
@@ -479,6 +521,14 @@ impl eframe::App for SynchroApp {
                     }
                     // Mark as stored on the relay, never as delivered to Android.
                     self.files.retain(|f| f != &path);
+                }
+                Event::ReceiveFolderPicked(folder) => {
+                    self.settings.receive_folder=folder.to_string_lossy().into_owned();
+                    self.persist_settings();
+                }
+                Event::InboxFinished(result) => {
+                    self.receiving=false;
+                    self.status=result.unwrap_or_else(|e| format!("Помилка приймання на ПК: {e}"));
                 }
                 Event::FolderPicked(folder) => {
                     self.settings.watch_folder = folder.to_string_lossy().into_owned();
@@ -533,6 +583,11 @@ impl eframe::App for SynchroApp {
             && self.last_check.elapsed() > Duration::from_secs(20)
         {
             self.check_connection();
+        }
+        if self.settings.auto_receive && !self.receiving && !self.busy
+            && self.last_inbox_poll.elapsed() > Duration::from_secs(60)
+            && inbox::is_ready(&self.settings) {
+            self.receive_inbox();
         }
         self.sync_watcher();
         // Render the real transfer state and controls; no simulated phones or QR codes.
