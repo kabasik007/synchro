@@ -41,6 +41,46 @@ fn config_path() -> Option<PathBuf> {
     Some(dirs::config_dir()?.join("Synchro").join("settings.json"))
 }
 
+// Unsent files are kept separately from credentials and restored after a restart.
+fn queue_path() -> Option<PathBuf> {
+    Some(dirs::config_dir()?.join("Synchro").join("pending-queue.json"))
+}
+
+fn load_queue() -> Vec<PathBuf> {
+    let Some(path) = queue_path() else { return Vec::new(); };
+    let mut candidates = vec![path.clone()];
+    candidates.push(path.with_extension("bak"));
+    for candidate in candidates {
+        if let Ok(contents) = std::fs::read_to_string(candidate) {
+            if let Ok(mut items) = serde_json::from_str::<Vec<PathBuf>>(&contents) {
+                items.truncate(500);
+                items.dedup();
+                return items;
+            }
+        }
+    }
+    Vec::new()
+}
+
+fn save_queue(files: &[PathBuf]) -> Result<(), String> {
+    let path = queue_path().ok_or("Cannot locate the queue directory")?;
+    let parent = path.parent().ok_or("Invalid queue path")?;
+    std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    let payload = serde_json::to_vec_pretty(files).map_err(|e| e.to_string())?;
+    let temp = path.with_extension("tmp");
+    std::fs::write(&temp, payload).map_err(|e| e.to_string())?;
+    if path.exists() {
+        // Windows std::fs::rename cannot always overwrite an existing target.
+        // Keep the previous valid file as a recovery fallback.
+        let _ = std::fs::copy(&path, path.with_extension("bak"));
+    }
+    if std::fs::rename(&temp, &path).is_err() {
+        std::fs::copy(&temp, &path).map_err(|e| e.to_string())?;
+        let _ = std::fs::remove_file(temp);
+    }
+    Ok(())
+}
+
 fn load_settings() -> Settings {
     config_path()
         .and_then(|p| std::fs::read_to_string(p).ok())
@@ -105,17 +145,18 @@ struct SentItem {
 #[derive(Debug)]
 enum Event {
     Status(String),
-    Progress(u64, u64),
+    Progress(PathBuf, u64, u64),
     Finished(Result<String, String>),
     FileSent(PathBuf),
     FilesPicked(Vec<PathBuf>),
     FolderPicked(PathBuf),
     WatchFile(PathBuf),
-    Connected(Result<DeviceInfo, String>),
+    Connected(String, String, Result<DeviceInfo, String>),
 }
 
 struct ProgressFile {
     file: File,
+    path: PathBuf,
     sent: u64,
     total: u64,
     events: Sender<Event>,
@@ -128,7 +169,7 @@ impl Read for ProgressFile {
         self.sent += count as u64;
         if self.sent.saturating_sub(self.last_report) > 256 * 1024 || self.sent == self.total {
             self.last_report = self.sent;
-            let _ = self.events.send(Event::Progress(self.sent, self.total));
+            let _ = self.events.send(Event::Progress(self.path.clone(), self.sent, self.total));
         }
         Ok(count)
     }
@@ -198,7 +239,7 @@ fn send_files(files: Vec<PathBuf>, settings: Settings, tx: Sender<Event>) -> Res
         let sha256 = hex_digest(&path)?;
         let file = File::open(&path).map_err(|e| e.to_string())?;
         let reader = ProgressFile {
-            file, sent: 0, total: metadata.len(), events: tx.clone(), last_report: 0,
+            file, path: path.clone(), sent: 0, total: metadata.len(), events: tx.clone(), last_report: 0,
         };
         let _ = tx.send(Event::Status(format!("Uploading: {name}")));
         let response = client.post(&url)
@@ -236,7 +277,7 @@ struct SynchroApp {
     show_token: bool,
     show_manual_path: bool,
     history: Vec<SentItem>,
-    current_file: Option<String>,
+    current_path: Option<PathBuf>,
     watcher: watch::FolderWatch,
     last_check: Instant,
 }
@@ -245,13 +286,13 @@ impl Default for SynchroApp {
     fn default() -> Self {
         let (tx, rx) = mpsc::channel();
         Self {
-            settings: load_settings(), files: vec![], manual_path: String::new(),
+            settings: load_settings(), files: load_queue(), manual_path: String::new(),
             status: "Pair Android, then drop APK/ZIP files here".into(),
             progress: 0.0, busy: false, tx, rx,
             page: ui::Page::default(), connection: ui::Connection::default(),
             checking: false, last_checked_pair: None,
             show_token: false, show_manual_path: false,
-            history: Vec::new(), current_file: None,
+            history: Vec::new(), current_path: None,
             watcher: watch::FolderWatch::default(),
             last_check: Instant::now() - Duration::from_secs(30),
         }
@@ -301,7 +342,7 @@ impl SynchroApp {
         let tx = self.tx.clone();
         std::thread::spawn(move || {
             let result = check_receiver(&settings);
-            let _ = tx.send(Event::Connected(result));
+            let _ = tx.send(Event::Connected(settings.address, settings.token, result));
         });
     }
 
@@ -351,20 +392,23 @@ impl SynchroApp {
 
 impl eframe::App for SynchroApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        let queue_before = self.files.clone();
         let mut new_files = false;
+        let mut continue_queue = false;
         while let Ok(event) = self.rx.try_recv() {
             match event {
                 Event::Status(s) => {
-                    self.current_file = s.strip_prefix("Uploading: ").map(str::to_owned);
                     self.status = s;
                     self.progress = 0.0;
                 }
-                Event::Progress(done, total) => {
+                Event::Progress(path, done, total) => {
+                    self.current_path = Some(path);
                     if total > 0 { self.progress = done as f32 / total as f32; }
                 }
                 Event::Finished(result) => {
                     self.busy = false;
-                    self.current_file = None;
+                    self.current_path = None;
+                    continue_queue = result.is_ok() && self.settings.auto_send;
                     self.status = result.unwrap_or_else(|e| format!("Помилка передачі: {e}"));
                 }
                 Event::FileSent(path) => {
@@ -392,12 +436,16 @@ impl eframe::App for SynchroApp {
                         new_files = true;
                     }
                 }
-                Event::Connected(result) => {
+                Event::Connected(address, token, result) => {
                     self.checking = false;
-                    self.connection = match result {
-                        Ok(info) => ui::Connection::Online(info),
-                        Err(e) => ui::Connection::Offline(e),
-                    };
+                    if self.settings.address == address && self.settings.token == token {
+                        self.connection = match result {
+                            Ok(info) => ui::Connection::Online(info),
+                            Err(e) => ui::Connection::Offline(e),
+                        };
+                    } else {
+                        self.connection = ui::Connection::Unknown;
+                    }
                 }
             }
         }
@@ -427,6 +475,14 @@ impl eframe::App for SynchroApp {
         self.sync_watcher();
         // Render the real transfer state and controls; no simulated phones or QR codes.
         ui::render(ui, self);
+        if self.files != queue_before {
+            if let Err(e) = save_queue(&self.files) {
+                self.status = format!("Не вдалося зберегти чергу: {e}");
+            }
+        }
+        if continue_queue && !self.busy && !self.files.is_empty() {
+            self.start();
+        }
         ui.ctx().request_repaint_after(Duration::from_millis(if self.busy || self.checking { 100 } else { 400 }));
     }
 }
